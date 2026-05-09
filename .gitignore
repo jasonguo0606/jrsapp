@@ -1,0 +1,21 @@
+# Android build artifacts
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+
+# Kotlin
+*.class
+
+# Gradle wrapper (keep properties, exclude jar/sh for security)
+gradle/wrapper/gradle-wrapper.jar
+gradlew
+gradlew.bat
