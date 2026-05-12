@@ -204,12 +204,12 @@ object PlaybackPageParser {
 
     private fun extractDirectMediaUrl(candidateUrl: String, pageUrl: String): String? =
         when {
+            isPapsPage(candidateUrl) -> resolvePapsMediaUrl(candidateUrl)
+            isMsssPlayerPage(candidateUrl) -> resolveMsssMediaUrl(candidateUrl, pageUrl)
             isMediaUrl(candidateUrl) -> {
                 Log.d(TAG, "direct media candidate=$candidateUrl")
                 candidateUrl
             }
-            isPapsPage(candidateUrl) -> resolvePapsMediaUrl(candidateUrl)
-            isMsssPlayerPage(candidateUrl) -> resolveMsssMediaUrl(candidateUrl, pageUrl)
             else -> {
                 val path = runCatching { Uri.parse(candidateUrl).path }.getOrNull()
                 Log.d(TAG, "skip non-player candidate=$candidateUrl path=$path")
@@ -283,6 +283,12 @@ object PlaybackPageParser {
 
     private fun isMediaUrl(url: String): Boolean {
         val lower = url.lowercase()
+        val path = runCatching { Uri.parse(url).path.orEmpty().lowercase() }.getOrNull()
+
+        if (path != null) {
+            return path.contains(".m3u8") || path.contains(".mp4") || path.contains(".flv")
+        }
+
         return lower.contains(".m3u8") || lower.contains(".mp4") || lower.contains(".flv")
     }
 
@@ -342,11 +348,14 @@ object PlaybackPageParser {
         val lower = html.lowercase()
         val syntheticPattern = Regex("""src=['"]/play/['"]\s*\+\s*id\d*\s*\+\s*['"]\.html['"]""", RegexOption.IGNORE_CASE)
 
-        if (uri.path?.endsWith("/kbmm.php", ignoreCase = true) == true) {
+        if (
+            uri.path?.endsWith("/kbmm.php", ignoreCase = true) == true ||
+            uri.path?.endsWith("/y.php", ignoreCase = true) == true
+        ) {
             val encoded = encodedStrRegex.find(html)?.groupValues?.getOrNull(1)
             if (!encoded.isNullOrBlank()) {
                 val next = "https://cloud.yumixiu768.com/player/paps.html?id=$encoded"
-                Log.d(TAG, "synthesized kbmm paps url=$next from pageUrl=$pageUrl")
+                Log.d(TAG, "synthesized encoded paps url=$next from pageUrl=$pageUrl")
                 return listOf(next)
             }
         }
