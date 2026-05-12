@@ -4,6 +4,7 @@ import android.util.Log
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.model.StreamLink
 import org.jsoup.Jsoup
+import java.net.URI
 
 object MatchParser {
 
@@ -35,11 +36,17 @@ object MatchParser {
 
     private fun parseItem(el: org.jsoup.nodes.Element, index: Int): Match? {
         return try {
-            val streamLinks = el.select(".lab_channel a[href*=steam]")
-                .filter { it.attr("href").startsWith("http") }
+            Log.d(TAG, "parseItem[$index] data-lid=${el.attr("data-lid")} html=${el.outerHtml().take(500)}")
+            val streamLinks = el.select(".lab_channel a")
                 .mapIndexed { i, a ->
-                    StreamLink(label = "线路${i + 1}", url = a.attr("href"))
+                    val rawUrl = a.attr("data-play").takeIf { it.isNotBlank() && it != "#" && !it.startsWith("javascript:", true) }
+                        ?: a.attr("href")
+                    val normalized = normalizeUrl(rawUrl)
+                    Log.d(TAG, "parseItem[$index] line${i + 1} href=${a.attr("href")} data-play=${a.attr("data-play")} normalized=$normalized")
+                    normalized.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+                        ?.let { StreamLink(label = "线路${i + 1}", url = it) }
                 }
+                .filterNotNull()
             if (streamLinks.isEmpty()) return null
 
             val league   = el.selectFirst(".lab_events span.name, .lab_events .name")?.text()?.trim() ?: ""
@@ -80,4 +87,15 @@ object MatchParser {
     fun isCba(league: String) = league.contains("CBA", ignoreCase = true)
     fun isBasketball(league: String) =
         isNba(league) || isCba(league) || league.contains("篮球", ignoreCase = true)
+
+    private fun normalizeUrl(url: String): String {
+        val trimmed = url.trim()
+        return when {
+            trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> trimmed
+            trimmed.startsWith("//") -> "https:$trimmed"
+            trimmed.startsWith("/") -> URI("https://m.jrskk.com/").resolve(trimmed).toString()
+            trimmed.startsWith("javascript:", true) -> ""
+            else -> trimmed
+        }
+    }
 }
