@@ -10,7 +10,7 @@ object MatchParser {
 
     private const val TAG = "MatchParser"
 
-    fun parseMatches(html: String): List<Match> {
+    fun parseMatches(html: String, baseUrl: String): List<Match> {
         val doc = Jsoup.parse(html)
 
         // 每场比赛的容器带有 data-lid 属性，且包含 .lab_channel 直播链接
@@ -28,20 +28,20 @@ object MatchParser {
                 .also { Log.d(TAG, "降级策略找到: ${it.size}") }
         }
 
-        val results = items.mapIndexedNotNull { i, el -> parseItem(el, i) }
+        val results = items.mapIndexedNotNull { i, el -> parseItem(el, i, baseUrl) }
         Log.d(TAG, "解析出 ${results.size} 场比赛")
         results.take(5).forEach { Log.d(TAG, "  联赛=${it.league}  ${it.homeTeam} vs ${it.awayTeam}") }
         return results
     }
 
-    private fun parseItem(el: org.jsoup.nodes.Element, index: Int): Match? {
+    private fun parseItem(el: org.jsoup.nodes.Element, index: Int, baseUrl: String): Match? {
         return try {
             Log.d(TAG, "parseItem[$index] data-lid=${el.attr("data-lid")} html=${el.outerHtml().take(500)}")
             val streamLinks = el.select(".lab_channel a")
                 .mapIndexed { i, a ->
                     val rawUrl = a.attr("data-play").takeIf { it.isNotBlank() && it != "#" && !it.startsWith("javascript:", true) }
                         ?: a.attr("href")
-                    val normalized = normalizeUrl(rawUrl)
+                    val normalized = normalizeUrl(rawUrl, baseUrl)
                     Log.d(TAG, "parseItem[$index] line${i + 1} href=${a.attr("href")} data-play=${a.attr("data-play")} normalized=$normalized")
                     normalized.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
                         ?.let { StreamLink(label = "线路${i + 1}", url = it) }
@@ -88,12 +88,12 @@ object MatchParser {
     fun isBasketball(league: String) =
         isNba(league) || isCba(league) || league.contains("篮球", ignoreCase = true)
 
-    private fun normalizeUrl(url: String): String {
+    private fun normalizeUrl(url: String, baseUrl: String): String {
         val trimmed = url.trim()
         return when {
             trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> trimmed
             trimmed.startsWith("//") -> "https:$trimmed"
-            trimmed.startsWith("/") -> URI("https://m.jrskk.com/").resolve(trimmed).toString()
+            trimmed.startsWith("/") -> URI(baseUrl).resolve(trimmed).toString()
             trimmed.startsWith("javascript:", true) -> ""
             else -> trimmed
         }

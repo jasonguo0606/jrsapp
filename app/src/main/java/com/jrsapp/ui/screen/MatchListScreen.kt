@@ -1,5 +1,6 @@
 package com.jrsapp.ui.screen
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -73,6 +74,9 @@ fun MatchListScreen(
                         ErrorView(
                             message = state.message,
                             onRetry = { viewModel.loadMatches() },
+                            currentDomain = state.currentDomain,
+                            backupDomains = state.backupDomains,
+                            onSwitchDomain = viewModel::switchDomain,
                             modifier = Modifier.align(Alignment.Center)
                         )
                     }
@@ -265,18 +269,52 @@ private fun LiveBadge() {
 }
 
 @Composable
-private fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+private fun ErrorView(
+    message: String,
+    onRetry: () -> Unit,
+    currentDomain: String,
+    backupDomains: List<String>,
+    onSwitchDomain: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(text = "加载失败: $message", color = Color.Gray, fontSize = 14.sp)
+        Text(
+            text = "当前域名: $currentDomain",
+            color = Color(0xFF4FC3F7),
+            fontSize = 12.sp
+        )
         Button(
             onClick = onRetry,
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE88C23))
         ) {
             Text("重试")
+        }
+        if (backupDomains.isNotEmpty()) {
+            Text(
+                text = "主域名不可用时，可切换备用域名",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                backupDomains.forEach { domain ->
+                    OutlinedButton(
+                        onClick = { onSwitchDomain(domain) },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = BorderStroke(1.dp, Color(0xFF4FC3F7))
+                    ) {
+                        Text(domain, fontSize = 12.sp)
+                    }
+                }
+            }
         }
     }
 }

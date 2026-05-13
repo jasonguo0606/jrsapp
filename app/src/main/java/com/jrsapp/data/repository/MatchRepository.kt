@@ -18,16 +18,17 @@ class MatchRepository {
 
     private val client = buildClient()
 
-    suspend fun fetchAllMatches(): Result<List<Match>> =
+    suspend fun fetchAllMatches(domain: String = PRIMARY_DOMAIN): Result<List<Match>> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val (code, html) = fetch(MATCH_LIST_URL)
-                Log.d(TAG, "HTTP状态码: $code  HTML长度: ${html.length}")
+                val baseUrl = buildBaseUrl(domain)
+                val (code, html) = fetch(baseUrl)
+                Log.d(TAG, "domain=$domain HTTP状态码: $code  HTML长度: ${html.length}")
                 Log.d(TAG, "含match-item: ${html.contains("match-item")}  含steam: ${html.contains("steam")}")
                 Log.d(TAG, "HTML前1200字符:\n${html.take(1200)}")
-                MatchParser.parseMatches(html)
+                MatchParser.parseMatches(html, baseUrl)
             }.onFailure {
-                Log.e(TAG, "获取比赛列表失败", it)
+                Log.e(TAG, "获取比赛列表失败 domain=$domain", it)
             }
         }
 
@@ -41,8 +42,11 @@ class MatchRepository {
 
     companion object {
         private const val TAG = "MatchRepository"
-        const val BASE_URL = "https://m.jrskk.com"
-        private const val MATCH_LIST_URL = "https://m.jrskk.com"
+        const val PRIMARY_DOMAIN = "m.jrskk.com"
+        val BACKUP_DOMAINS = listOf("www.jrs04.com", "www.jrs80.com", "www.jrs03.com")
+        val ALL_DOMAINS = listOf(PRIMARY_DOMAIN) + BACKUP_DOMAINS
+
+        fun buildBaseUrl(domain: String): String = "https://$domain"
 
         private fun buildClient(): OkHttpClient {
             val trustAll = object : X509TrustManager {

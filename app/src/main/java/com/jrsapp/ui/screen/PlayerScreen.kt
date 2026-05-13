@@ -6,7 +6,9 @@ import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.util.Log
+import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -25,10 +27,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -42,8 +42,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -52,7 +50,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,12 +57,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -79,10 +74,10 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.model.VideoSource
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 
 private const val PLAYER_TAG = "NativePlayer"
 
@@ -102,8 +97,14 @@ fun PlayerScreen(
         activity?.requestedOrientation =
             if (isFullscreen) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (isFullscreen) {
+            activity?.enterImmersiveMode()
+        } else {
+            activity?.exitImmersiveMode()
+        }
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            activity?.exitImmersiveMode()
         }
     }
 
@@ -117,8 +118,6 @@ fun PlayerScreen(
 
     if (isFullscreen) {
         FullscreenPlayerLayout(
-            title = "${match.homeTeam} vs ${match.awayTeam}",
-            league = match.league,
             source = uiState.currentSource,
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
@@ -158,8 +157,6 @@ fun PlayerScreen(
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
-            title = "${match.homeTeam} vs ${match.awayTeam}",
-            subtitle = uiState.currentSource?.label ?: match.league,
             fullscreen = false,
             onToggleFullscreen = { isFullscreenState.value = true }
         )
@@ -250,8 +247,6 @@ private fun NativePlayerSection(
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
-    title: String,
-    subtitle: String,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit
 ) {
@@ -259,17 +254,23 @@ private fun NativePlayerSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = if (fullscreen) 0.dp else 16.dp),
-        shape = if (fullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(0.dp),
         color = Color(0xFF070B14),
         tonalElevation = 0.dp,
         shadowElevation = if (fullscreen) 0.dp else 10.dp,
         border = if (fullscreen) null else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .background(Color.Black)
+            modifier = if (fullscreen) {
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .background(Color.Black)
+            }
         ) {
             when {
                 source != null -> NativePlayer(
@@ -294,39 +295,6 @@ private fun NativePlayerSection(
                 )
             }
 
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(88.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)
-                        )
-                    )
-            )
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f))
-                        )
-                    )
-            )
-
-            PlayerChrome(
-                title = title,
-                subtitle = subtitle,
-                fullscreen = fullscreen,
-                onToggleFullscreen = onToggleFullscreen,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
-            )
         }
     }
 }
@@ -339,6 +307,7 @@ private fun NativePlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val activity = context.findActivity()
     val exoPlayer = remember(source.url, source.referer) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
@@ -362,10 +331,33 @@ private fun NativePlayer(
                 prepare()
             }
     }
+    var keepScreenOn by remember(exoPlayer) { mutableStateOf(exoPlayer.shouldKeepScreenOnForPlayback()) }
 
     DisposableEffect(exoPlayer) {
         onDispose {
             exoPlayer.release()
+        }
+    }
+
+    DisposableEffect(exoPlayer, activity) {
+        val syncKeepScreenOn = {
+            keepScreenOn = exoPlayer.shouldKeepScreenOnForPlayback()
+            activity?.setPlaybackKeepScreenOn(keepScreenOn)
+        }
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                syncKeepScreenOn()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                syncKeepScreenOn()
+            }
+        }
+        exoPlayer.addListener(listener)
+        syncKeepScreenOn()
+        onDispose {
+            exoPlayer.removeListener(listener)
+            activity?.setPlaybackKeepScreenOn(false)
         }
     }
 
@@ -376,6 +368,7 @@ private fun NativePlayer(
                     player = exoPlayer
                     useController = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -394,77 +387,6 @@ private fun NativePlayer(
             onToggleFullscreen = onToggleFullscreen,
             modifier = Modifier.fillMaxSize()
         )
-    }
-}
-
-@Composable
-private fun PlayerChrome(
-    title: String,
-    subtitle: String,
-    fullscreen: Boolean,
-    onToggleFullscreen: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = subtitle,
-                    color = Color(0xB3FFFFFF),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            IconButton(
-                onClick = onToggleFullscreen,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(alpha = 0.14f))
-            ) {
-                Text(
-                    text = if (fullscreen) "退出" else "全屏",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start
-        ) {
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = Color(0x33FFFFFF),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-            ) {
-                Text(
-                    text = if (fullscreen) "横屏全屏" else "原生播放",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
-            }
-        }
     }
 }
 
@@ -541,7 +463,6 @@ private fun PlayerControlOverlay(
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             BottomControlBar(
-                exoPlayer = exoPlayer,
                 fullscreen = fullscreen,
                 onToggleFullscreen = onToggleFullscreen
             )
@@ -550,96 +471,34 @@ private fun PlayerControlOverlay(
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
 private fun BottomControlBar(
-    exoPlayer: ExoPlayer,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit
 ) {
-    var currentPosition by remember { mutableLongStateOf(0L) }
-    var duration by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(exoPlayer) {
-        while (isActive) {
-            currentPosition = exoPlayer.currentPosition.coerceAtLeast(0)
-            duration = exoPlayer.duration.coerceAtLeast(0)
-            delay(500)
-        }
-    }
-
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0x99000000))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Slider(
-            value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
-            onValueChange = { fraction ->
-                if (duration > 0) {
-                    exoPlayer.seekTo((fraction * duration).toLong())
-                    currentPosition = (fraction * duration).toLong()
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(3.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color(0xFFE88C23),
-                inactiveTrackColor = Color(0x66FFFFFF)
-            ),
-            thumb = {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .background(Color.White, CircleShape)
-                )
-            }
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+        IconButton(
+            onClick = onToggleFullscreen,
+            modifier = Modifier.size(48.dp)
         ) {
             Text(
-                text = "${formatTime(currentPosition)} / ${formatTime(duration)}",
+                text = if (fullscreen) "退出" else "全屏",
                 color = Color.White,
-                fontSize = 12.sp
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
             )
-            IconButton(
-                onClick = onToggleFullscreen,
-                modifier = Modifier.size(48.dp)
-            ) {
-                Text(
-                    text = if (fullscreen) "退出" else "全屏",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
         }
-    }
-}
-
-private fun formatTime(ms: Long): String {
-    if (ms <= 0) return "00:00"
-    val totalSeconds = ms / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format("%02d:%02d", minutes, seconds)
     }
 }
 
 @Composable
 private fun FullscreenPlayerLayout(
-    title: String,
-    league: String,
     source: VideoSource?,
     resolving: Boolean,
     errorMessage: String?,
@@ -649,9 +508,7 @@ private fun FullscreenPlayerLayout(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .statusBarsPadding()
-            .navigationBarsPadding(),
+            .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
         NativePlayerSection(
@@ -659,11 +516,24 @@ private fun FullscreenPlayerLayout(
             resolving = resolving,
             errorMessage = errorMessage,
             onRetry = onRetry,
-            title = title,
-            subtitle = source?.label ?: league,
             fullscreen = true,
             onToggleFullscreen = onExitFullscreen
         )
+
+        IconButton(
+            onClick = onExitFullscreen,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.46f))
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "退出全屏",
+                tint = Color.White
+            )
+        }
     }
 }
 
@@ -736,6 +606,32 @@ private fun Context.findActivity(): Activity? =
         is ContextWrapper -> baseContext.findActivity()
         else -> null
     }
+
+private fun Activity.enterImmersiveMode() {
+    window.decorView.systemUiVisibility = (
+        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            or View.SYSTEM_UI_FLAG_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        )
+}
+
+private fun Activity.exitImmersiveMode() {
+    window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+}
+
+private fun ExoPlayer.shouldKeepScreenOnForPlayback(): Boolean =
+    playWhenReady && playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED
+
+private fun Activity.setPlaybackKeepScreenOn(enabled: Boolean) {
+    if (enabled) {
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    } else {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+}
 
 @Composable
 private fun PlayerErrorView(
