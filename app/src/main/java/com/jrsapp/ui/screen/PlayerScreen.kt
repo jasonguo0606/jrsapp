@@ -48,7 +48,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -117,7 +116,8 @@ fun PlayerScreen(
                 resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
                 errorMessage = uiState.errorMessage,
                 onRetry = viewModel::retry,
-                isFullscreen = isFullscreen
+                isFullscreen = isFullscreen.value,
+                onToggleFullscreen = { isFullscreen.value = !isFullscreen.value }
             )
         }
     } else {
@@ -151,7 +151,8 @@ fun PlayerScreen(
                 resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
                 errorMessage = uiState.errorMessage,
                 onRetry = viewModel::retry,
-                isFullscreen = isFullscreen
+                isFullscreen = isFullscreen.value,
+                onToggleFullscreen = { isFullscreen.value = !isFullscreen.value }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -241,9 +242,10 @@ private fun NativePlayerSection(
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
-    isFullscreen: MutableState<Boolean>
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit
 ) {
-    val playerModifier = if (isFullscreen.value) {
+    val playerModifier = if (isFullscreen) {
         Modifier.fillMaxSize()
     } else {
         Modifier
@@ -258,6 +260,7 @@ private fun NativePlayerSection(
             source != null -> NativePlayer(
                 source = source,
                 isFullscreen = isFullscreen,
+                onToggleFullscreen = onToggleFullscreen,
                 modifier = Modifier.fillMaxSize()
             )
             resolving -> CircularProgressIndicator(
@@ -281,7 +284,8 @@ private fun NativePlayerSection(
 @Composable
 private fun NativePlayer(
     source: VideoSource,
-    isFullscreen: MutableState<Boolean>,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -336,6 +340,7 @@ private fun NativePlayer(
         PlayerControlOverlay(
             exoPlayer = exoPlayer,
             isFullscreen = isFullscreen,
+            onToggleFullscreen = onToggleFullscreen,
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -344,18 +349,21 @@ private fun NativePlayer(
 @Composable
 private fun PlayerControlOverlay(
     exoPlayer: ExoPlayer,
-    isFullscreen: MutableState<Boolean>,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var controlsVisible by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
 
-    LaunchedEffect(exoPlayer) {
-        exoPlayer.addListener(object : Player.Listener {
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
-        })
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
     }
 
     LaunchedEffect(controlsVisible, isPlaying) {
@@ -404,13 +412,14 @@ private fun PlayerControlOverlay(
         ) {
             BottomControlBar(
                 exoPlayer = exoPlayer,
-                isFullscreen = isFullscreen
+                isFullscreen = isFullscreen,
+                onToggleFullscreen = onToggleFullscreen
             )
         }
 
-        if (isFullscreen.value) {
+        if (isFullscreen) {
             IconButton(
-                onClick = { isFullscreen.value = false },
+                onClick = onToggleFullscreen,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
@@ -428,7 +437,8 @@ private fun PlayerControlOverlay(
 @Composable
 private fun BottomControlBar(
     exoPlayer: ExoPlayer,
-    isFullscreen: MutableState<Boolean>
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit
 ) {
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -483,12 +493,12 @@ private fun BottomControlBar(
                 fontSize = 12.sp
             )
             IconButton(
-                onClick = { isFullscreen.value = !isFullscreen.value },
+                onClick = onToggleFullscreen,
                 modifier = Modifier.size(48.dp)
             ) {
                 Icon(
-                    imageVector = if (isFullscreen.value) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                    contentDescription = if (isFullscreen.value) "退出全屏" else "全屏",
+                    imageVector = if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    contentDescription = if (isFullscreen) "退出全屏" else "全屏",
                     tint = Color.White,
                     modifier = Modifier.size(20.dp)
                 )
