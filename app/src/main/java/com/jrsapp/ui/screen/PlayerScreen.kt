@@ -1,21 +1,29 @@
 package com.jrsapp.ui.screen
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.util.Log
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,19 +35,24 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -66,8 +79,39 @@ fun PlayerScreen(
 ) {
     val viewModel: PlayerViewModel = viewModel(key = match.id, factory = PlayerViewModelFactory(match))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isFullscreenState = rememberSaveable { mutableStateOf(false) }
+    val isFullscreen = isFullscreenState.value
+    val activity = LocalContext.current.findActivity()
 
-    BackHandler { onBack() }
+    DisposableEffect(activity, isFullscreen) {
+        activity?.requestedOrientation =
+            if (isFullscreen) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    BackHandler {
+        if (isFullscreen) {
+            isFullscreenState.value = false
+        } else {
+            onBack()
+        }
+    }
+
+    if (isFullscreen) {
+        FullscreenPlayerLayout(
+            title = "${match.homeTeam} vs ${match.awayTeam}",
+            league = match.league,
+            source = uiState.currentSource,
+            resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
+            errorMessage = uiState.errorMessage,
+            onRetry = viewModel::retry,
+            onExitFullscreen = { isFullscreenState.value = false }
+        )
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -98,7 +142,11 @@ fun PlayerScreen(
             source = uiState.currentSource,
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
-            onRetry = viewModel::retry
+            onRetry = viewModel::retry,
+            title = "${match.homeTeam} vs ${match.awayTeam}",
+            subtitle = uiState.currentSource?.label ?: match.league,
+            fullscreen = false,
+            onToggleFullscreen = { isFullscreenState.value = true }
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -136,7 +184,7 @@ fun PlayerScreen(
             uiState.loadingPlaybackPage -> {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "正在加载该线路下的主播入口...",
+                    text = "正在加载该线路下的直播线路...",
                     color = Color.Gray,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 16.dp)
@@ -146,7 +194,7 @@ fun PlayerScreen(
             uiState.subLines.isNotEmpty() -> {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "选择主播/清晰度",
+                    text = "选择直播线路",
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 16.dp)
@@ -186,29 +234,78 @@ private fun NativePlayerSection(
     source: VideoSource?,
     resolving: Boolean,
     errorMessage: String?,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    title: String,
+    subtitle: String,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit
 ) {
-    Box(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .background(Color.Black)
+            .padding(horizontal = if (fullscreen) 0.dp else 16.dp),
+        shape = if (fullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp),
+        color = Color(0xFF070B14),
+        tonalElevation = 0.dp,
+        shadowElevation = if (fullscreen) 0.dp else 10.dp,
+        border = if (fullscreen) null else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
     ) {
-        when {
-            source != null -> NativePlayer(source = source)
-            resolving -> CircularProgressIndicator(
-                modifier = Modifier.align(Alignment.Center),
-                color = Color(0xFFE88C23)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(if (fullscreen) 16f / 9f else 16f / 9f)
+                .background(Color.Black)
+        ) {
+            when {
+                source != null -> NativePlayer(source = source)
+                resolving -> CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color(0xFFFF9B3D)
+                )
+                errorMessage != null -> PlayerErrorView(
+                    message = errorMessage,
+                    onRetry = onRetry,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                else -> Text(
+                    text = "暂无可播放视频源",
+                    color = Color.Gray,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(88.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)
+                        )
+                    )
             )
-            errorMessage != null -> PlayerErrorView(
-                message = errorMessage,
-                onRetry = onRetry,
-                modifier = Modifier.align(Alignment.Center)
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(120.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f))
+                        )
+                    )
             )
-            else -> Text(
-                text = "暂无可播放视频源",
-                color = Color.Gray,
-                modifier = Modifier.align(Alignment.Center)
+
+            PlayerChrome(
+                title = title,
+                subtitle = subtitle,
+                fullscreen = fullscreen,
+                onToggleFullscreen = onToggleFullscreen,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
             )
         }
     }
@@ -251,7 +348,8 @@ private fun NativePlayer(source: VideoSource) {
         factory = { ctx ->
             PlayerView(ctx).apply {
                 player = exoPlayer
-                useController = true
+                useController = false
+                setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
@@ -263,6 +361,108 @@ private fun NativePlayer(source: VideoSource) {
         },
         modifier = Modifier.fillMaxSize()
     )
+}
+
+@Composable
+private fun PlayerChrome(
+    title: String,
+    subtitle: String,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    color = Color(0xB3FFFFFF),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            IconButton(
+                onClick = onToggleFullscreen,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White.copy(alpha = 0.14f))
+            ) {
+                Text(
+                    text = if (fullscreen) "退出" else "全屏",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = Color(0x33FFFFFF),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+            ) {
+                Text(
+                    text = if (fullscreen) "横屏全屏" else "原生播放",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullscreenPlayerLayout(
+    title: String,
+    league: String,
+    source: VideoSource?,
+    resolving: Boolean,
+    errorMessage: String?,
+    onRetry: () -> Unit,
+    onExitFullscreen: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        NativePlayerSection(
+            source = source,
+            resolving = resolving,
+            errorMessage = errorMessage,
+            onRetry = onRetry,
+            title = title,
+            subtitle = source?.label ?: league,
+            fullscreen = true,
+            onToggleFullscreen = onExitFullscreen
+        )
+    }
 }
 
 private fun playbackStateName(state: Int): String =
@@ -326,6 +526,13 @@ private fun buildPlayerLogger(player: ExoPlayer): Player.Listener =
                 "videoSize=${videoSize.width}x${videoSize.height} ratio=${videoSize.pixelWidthHeightRatio}"
             )
         }
+    }
+
+private fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
     }
 
 @Composable

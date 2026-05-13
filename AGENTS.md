@@ -112,6 +112,8 @@ streams  = ".lab_channel a[href*=steam]" // 过滤 href.startsWith("http")
 - `sm.html?id=xxx` -> 合成 `/play/{id}.html` -> `msss.html?id=/live/...m3u8`
 - `kbs.html?id=vl&id2=` -> 合成 `kbmm.php?id=vl` -> 提取 `encodedStr` -> `paps.html?id=...` -> XXTEA 解密 JSON -> `m3u8`
 - `y.php?id=...` -> 直接提取页内 `encodedStr` -> `paps.html?id=...` -> XXTEA 解密 JSON -> `m3u8`
+- `mgxl.php?id=...` -> 直接提取页内 `encodedStr` -> `paps.html?id=...` -> XXTEA 解密 JSON -> `m3u8`
+- `i11.html?id=...` -> 提取页内 iframe `./p/zhj_j.php?...` -> 继续递归解析后续播放页
 
 ### paps 解密说明
 

@@ -146,7 +146,7 @@ class PlayerViewModel(
         if (subLine == null) {
             _uiState.value = _uiState.value.copy(
                 resolvingSource = false,
-                errorMessage = "未找到对应主播线路"
+                errorMessage = "未找到对应直播线路"
             )
             return
         }

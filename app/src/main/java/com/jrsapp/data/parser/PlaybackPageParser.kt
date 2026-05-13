@@ -8,6 +8,9 @@ import com.jrsapp.data.model.PlaybackPage
 import com.jrsapp.data.model.StreamLink
 import com.jrsapp.data.model.VideoSource
 import com.jrsapp.data.model.VideoSourceType
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import org.jsoup.Jsoup
 import org.json.JSONObject
 
@@ -15,6 +18,7 @@ object PlaybackPageParser {
 
     private const val TAG = "PlaybackPageParser"
     private const val PAPS_KEY = "ABCDEFGHIJKLMNOPQRSTUVWX"
+    private const val ZHJ_AES_KEY = "redq9tmx12kb6s51"
     private const val XXTEA_DELTA = 0x9E3779B9.toInt()
 
     private val videoUrlRegex = Regex(
@@ -25,11 +29,16 @@ object PlaybackPageParser {
     private val purlHostRegex = Regex("""var\s+purl\s*=\s*["']\/\/([^"'\\]+)["']\s*\+\s*id""", RegexOption.IGNORE_CASE)
     private val kbmmIframeRegex = Regex("""src=['"]/play/kbmm\.php\?id=['"]\s*\+\s*id\s*\+\s*['"]""", RegexOption.IGNORE_CASE)
     private val encodedStrRegex = Regex("""var\s+encodedStr\s*=\s*'([^']+)'""", RegexOption.IGNORE_CASE)
+    private val zhjEncryptedRegex = Regex("""var\s+encryptedBase64Str\s*=\s*'([^']+)'""", RegexOption.IGNORE_CASE)
+    private val iframeSrcRegex = Regex("""src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+    private val qqCallbackRegex = Regex("""var\s+livegetinfo_callback\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+    private val qqVideoUrlStartRegex = Regex("""(?:https?://)?video\.qq\.com/\?cmd=2""", RegexOption.IGNORE_CASE)
+    private val playUrlRegex = Regex("""["']playurl["']\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
 
     fun extractPlaybackPage(html: String, pageUrl: String): PlaybackPage {
         val normalizedHtml = html.replace("\\/", "/")
         val doc = Jsoup.parse(normalizedHtml, pageUrl)
-        val subLines = linkedMapOf<String, StreamLink>()
+        val subLines = mutableListOf<StreamLink>()
 
         Log.d(TAG, "extractPlaybackPage pageUrl=$pageUrl htmlLen=${html.length}")
 
@@ -48,14 +57,23 @@ object PlaybackPageParser {
                         if (isSubLinePage(candidate, pageUrl)) {
                             val label = element.text().trim()
                                 .ifBlank { if (element.tagName() == "iframe") "默认入口" else "子线路${subLines.size + 1}" }
+                            if (element.tagName() == "iframe" && label == "默认入口") {
+                                Log.d(TAG, "skip iframe fallback entry candidate=$candidate")
+                                return@forEach
+                            }
+                            if (!shouldKeepSubLineLabel(label)) {
+                                Log.d(TAG, "skip filtered subLine label=$label candidate=$candidate")
+                                return@forEach
+                            }
                             Log.d(
                                 TAG,
                                 "subLine pageUrl=$pageUrl candidate=$candidate tag=${element.tagName()} text=${element.text().take(50)}"
                             )
-                            val existing = subLines[candidate]
-                            if (existing == null || existing.label.startsWith("默认") || existing.label.startsWith("子线路")) {
-                                subLines[candidate] = StreamLink(label = label, url = candidate)
-                            }
+                            addSubLine(
+                                subLines = subLines,
+                                label = label,
+                                url = candidate
+                            )
                         }
                     }
             }
@@ -63,19 +81,40 @@ object PlaybackPageParser {
         extractNestedPageUrls(html, pageUrl)
             .filter { isSubLinePage(it, pageUrl) }
             .forEachIndexed { index, candidate ->
-                val existing = subLines[candidate]
-                if (existing == null) {
-                    subLines[candidate] = StreamLink(label = "子线路${index + 1}", url = candidate)
+                if (shouldKeepGeneratedSubLine(subLines.isEmpty())) {
+                    addSubLine(
+                        subLines = subLines,
+                        label = "子线路${index + 1}",
+                        url = candidate
+                    )
                 }
             }
 
         val result = PlaybackPage(
             pageUrl = pageUrl,
-            subLines = subLines.values.toList()
+            subLines = subLines.toList()
         )
         Log.d(TAG, "extractPlaybackPage subLines=${result.subLines}")
         return result
     }
+
+    private fun addSubLine(
+        subLines: MutableList<StreamLink>,
+        label: String,
+        url: String
+    ) {
+        if (subLines.none { it.label == label && it.url == url }) {
+            subLines += StreamLink(label = label, url = url)
+        }
+    }
+
+    private fun shouldKeepSubLineLabel(label: String): Boolean {
+        val normalized = label.trim()
+        if (normalized.isBlank()) return true
+        return !normalized.contains("主播") && !normalized.contains("解说")
+    }
+
+    private fun shouldKeepGeneratedSubLine(hasNoExplicitSubLines: Boolean): Boolean = hasNoExplicitSubLines
 
     fun extractVideoSources(html: String, pageUrl: String): List<VideoSource> {
         val normalizedHtml = html.replace("\\/", "/")
@@ -87,6 +126,18 @@ object PlaybackPageParser {
         extractDirectMediaUrl(pageUrl, pageUrl)?.let { resolved ->
             Log.d(TAG, "pageUrl resolved directly pageUrl=$pageUrl resolved=$resolved")
             directUrls.add(resolved)
+        }
+
+        extractPlayUrlFromResponse(normalizedHtml, pageUrl)?.let { playUrl ->
+            extractDirectMediaUrl(playUrl, pageUrl)?.let { resolved ->
+                Log.d(TAG, "response playUrl resolved pageUrl=$pageUrl playUrl=$playUrl resolved=$resolved")
+                directUrls.add(resolved)
+            }
+        }
+
+        if (isQqApiRequest(pageUrl) && directUrls.isEmpty()) {
+            Log.d(TAG, "skip qq page dom scan without playUrl pageUrl=$pageUrl")
+            return emptyList()
         }
 
         doc.select("video[src], video source[src], source[src], iframe[src], frame[src], embed[src], a[href], a[data-play], a[data-src], a[data-url]")
@@ -127,6 +178,13 @@ object PlaybackPageParser {
 
     fun extractNestedPageUrls(html: String, pageUrl: String): List<String> {
         val normalizedHtml = html.replace("\\/", "/")
+        if (isQqApiRequest(pageUrl)) {
+            val syntheticOnly = extractSyntheticPlayerUrls(normalizedHtml, pageUrl)
+                .filter { it != pageUrl }
+                .distinct()
+            Log.d(TAG, "extractNestedPageUrls qq syntheticOnly pageUrl=$pageUrl nestedUrls=$syntheticOnly")
+            return syntheticOnly
+        }
         val doc = Jsoup.parse(normalizedHtml, pageUrl)
         val nestedUrls = linkedSetOf<String>()
 
@@ -144,7 +202,8 @@ object PlaybackPageParser {
                     .filter { it.isNotBlank() }
                     .mapNotNull { normalizeUrl(it, pageUrl) }
                     .forEach { candidate ->
-                        if (candidate.endsWith("kbmm.php?id=")) return@forEach
+                        if (isStaticResource(candidate)) return@forEach
+                        if (isIncompletePlayerUrl(candidate)) return@forEach
                         if (isLikelyPlayerPage(candidate) && candidate != pageUrl) {
                             Log.d(TAG, "nested candidate=$candidate tag=${element.tagName()} text=${element.text().take(50)}")
                             nestedUrls.add(candidate)
@@ -156,7 +215,8 @@ object PlaybackPageParser {
             .findAll(normalizedHtml)
             .mapNotNull { normalizeUrl(it.groupValues[1], pageUrl) }
             .forEach { candidate ->
-                if (candidate.endsWith("kbmm.php?id=")) return@forEach
+                if (isStaticResource(candidate)) return@forEach
+                if (isIncompletePlayerUrl(candidate)) return@forEach
                 if (isLikelyPlayerPage(candidate) && candidate != pageUrl) {
                     Log.d(TAG, "nested regex candidate=$candidate")
                     nestedUrls.add(candidate)
@@ -206,6 +266,7 @@ object PlaybackPageParser {
         when {
             isPapsPage(candidateUrl) -> resolvePapsMediaUrl(candidateUrl)
             isMsssPlayerPage(candidateUrl) -> resolveMsssMediaUrl(candidateUrl, pageUrl)
+            is538PlayerPage(candidateUrl) -> resolve538MediaUrl(candidateUrl)
             isMediaUrl(candidateUrl) -> {
                 Log.d(TAG, "direct media candidate=$candidateUrl")
                 candidateUrl
@@ -254,6 +315,17 @@ object PlaybackPageParser {
         }
     }
 
+    private fun resolve538MediaUrl(candidateUrl: String): String? {
+        val uri = runCatching { Uri.parse(candidateUrl) }.getOrNull() ?: return null
+        val playUrl = uri.getQueryParameter("id1")
+            ?.takeIf { it.isNotBlank() }
+            ?: uri.getQueryParameter("id2")?.takeIf { it.isNotBlank() }
+            ?: return null
+        val decoded = decodeQueryValue(playUrl)
+        Log.d(TAG, "538 player candidate=$candidateUrl decoded=$decoded")
+        return decoded.takeIf(::isMediaUrl)
+    }
+
     private fun extractMediaBaseHost(candidateUrl: String, pageUrl: String): String? {
         val htmlHost = runCatching { Uri.parse(candidateUrl).host }.getOrNull()?.takeIf { it.isNotBlank() }
         if (htmlHost != null && htmlHost.contains("cloud", ignoreCase = true)) {
@@ -292,17 +364,41 @@ object PlaybackPageParser {
         return lower.contains(".m3u8") || lower.contains(".mp4") || lower.contains(".flv")
     }
 
+    private fun isStaticResource(url: String): Boolean =
+        Regex("""\.(js|css|png|jpg|jpeg|gif|svg|webp)(\?|$)""", RegexOption.IGNORE_CASE).containsMatchIn(url)
+
+    private fun isIncompletePlayerUrl(url: String): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val path = uri.path.orEmpty().lowercase()
+        val id = uri.getQueryParameter("id").orEmpty()
+        return when {
+            path.endsWith("/kbmm.php") && id.isBlank() -> true
+            path.endsWith("/zhj_j.php") && id.isBlank() -> true
+            else -> false
+        }
+    }
+
     private fun isPapsPage(url: String): Boolean =
         runCatching { Uri.parse(url).path }.getOrNull()?.contains("/player/paps.html", ignoreCase = true) == true
 
     private fun isMsssPlayerPage(url: String): Boolean =
         runCatching { Uri.parse(url).path }.getOrNull()?.contains("msss.html", ignoreCase = true) == true
 
+    private fun is538PlayerPage(url: String): Boolean =
+        runCatching { Uri.parse(url).path }.getOrNull()?.contains("/player/538.html", ignoreCase = true) == true
+
+    private fun isQqApiRequest(url: String): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host.orEmpty().lowercase()
+        return (host.contains("video.qq.com") || host.contains("v.qq.com")) &&
+            uri.getQueryParameter("cmd") == "2"
+    }
+
     private fun isLikelyPlayerPage(url: String): Boolean {
         val lower = url.lowercase()
         if (lower.startsWith("data:") || lower.startsWith("javascript:")) return false
         if (isMediaUrl(lower)) return true
-        if (Regex("""\.(js|css|png|jpg|jpeg|gif|svg|webp)(\?|$)""", RegexOption.IGNORE_CASE).containsMatchIn(lower)) return false
+        if (isStaticResource(lower)) return false
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val host = uri?.host.orEmpty().lowercase()
         val path = uri?.path.orEmpty().lowercase()
@@ -311,6 +407,7 @@ object PlaybackPageParser {
         if (host.contains("yumixiu768.com") && path.contains("/player/")) return true
         if (host.contains("szsummer.cn") && path.startsWith("/live/")) return true
         if (host.contains("lhrhgb.com") && path.startsWith("/vlive/")) return true
+        if ((host.contains("video.qq.com") || host.contains("v.qq.com")) && uri?.getQueryParameter("cmd") == "2") return true
 
         return false
     }
@@ -334,9 +431,11 @@ object PlaybackPageParser {
 
         return path.contains("/play/sm.html") ||
             path.contains("/play/kbs.html") ||
+            path.contains("/play/i11.html") ||
             path.contains("/play/y.php") ||
             path.contains("/play/j.php") ||
             path.contains("/play/mgxl.php") ||
+            path.contains("/play/p/zhj_j.php") ||
             path.contains("/play/a") ||
             path.contains("/player/pap.html") ||
             path.contains("/player/paps.html")
@@ -350,12 +449,45 @@ object PlaybackPageParser {
 
         if (
             uri.path?.endsWith("/kbmm.php", ignoreCase = true) == true ||
-            uri.path?.endsWith("/y.php", ignoreCase = true) == true
+            uri.path?.endsWith("/y.php", ignoreCase = true) == true ||
+            uri.path?.endsWith("/mgxl.php", ignoreCase = true) == true
         ) {
             val encoded = encodedStrRegex.find(html)?.groupValues?.getOrNull(1)
             if (!encoded.isNullOrBlank()) {
                 val next = "https://cloud.yumixiu768.com/player/paps.html?id=$encoded"
                 Log.d(TAG, "synthesized encoded paps url=$next from pageUrl=$pageUrl")
+                return listOf(next)
+            }
+        }
+
+        if (uri.path?.endsWith("/i11.html", ignoreCase = true) == true) {
+            val id1 = uri.getQueryParameter("id").orEmpty()
+            val id2 = uri.getQueryParameter("id2").orEmpty()
+            val iframeSrc = if (id1.isNotBlank()) {
+                normalizeUrl("./p/zhj_j.php?id=$id1&id2=$id2", pageUrl)
+            } else {
+                iframeSrcRegex.find(html)?.groupValues?.getOrNull(1)
+                    ?.let { normalizeUrl(it, pageUrl) }
+            }
+            if (!iframeSrc.isNullOrBlank() && !isStaticResource(iframeSrc)) {
+                Log.d(TAG, "synthesized i11 iframe url=$iframeSrc from pageUrl=$pageUrl")
+                return listOf(iframeSrc)
+            }
+        }
+
+        if (uri.path?.endsWith("/play/p/zhj_j.php", ignoreCase = true) == true) {
+            val qqUrl = decryptZhjQqUrl(html, pageUrl)
+            if (!qqUrl.isNullOrBlank()) {
+                Log.d(TAG, "synthesized zhj qq url=$qqUrl from pageUrl=$pageUrl")
+                return listOf(qqUrl)
+            }
+        }
+
+        if (uri.host?.contains("video.qq.com", ignoreCase = true) == true) {
+            val playUrl = extractPlayUrlFromResponse(html, pageUrl)
+            val next = playUrl?.let(::build538PlayerUrl)
+            if (!next.isNullOrBlank()) {
+                Log.d(TAG, "synthesized qq 538 url=$next from pageUrl=$pageUrl playUrl=$playUrl")
                 return listOf(next)
             }
         }
@@ -381,6 +513,138 @@ object PlaybackPageParser {
         Log.d(TAG, "synthesized next player url=$next from pageUrl=$pageUrl")
         return listOf(next)
     }
+
+    private fun decryptZhjQqUrl(html: String, pageUrl: String): String? {
+        val encrypted = zhjEncryptedRegex.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+            ?: return null
+        return runCatching {
+            val decrypted = decryptZhjPayload(encrypted)
+            val callbackName = extractQqCallbackName(html)
+            val qqUrl = extractQqApiUrl(decrypted)
+                ?.let { sanitizeQqApiUrl(it, callbackName) }
+            val qqUrlTail = qqUrl?.takeLast(180).orEmpty()
+            Log.d(
+                TAG,
+                "decryptZhjQqUrl pageUrl=$pageUrl callbackName=$callbackName decryptedPrefix=${decrypted.take(200)} decryptedSuffix=${decrypted.takeLast(200)} qqUrlTail=$qqUrlTail"
+            )
+            qqUrl?.let { normalizeUrl(it, pageUrl) }
+        }.onFailure {
+            Log.e(TAG, "decryptZhjQqUrl failed pageUrl=$pageUrl", it)
+        }.getOrNull()
+    }
+
+    private fun decryptZhjPayload(encrypted: String): String {
+        val decodedBytes = Base64.getDecoder().decode(encrypted)
+        val keySpec = SecretKeySpec(ZHJ_AES_KEY.toByteArray(Charsets.UTF_8), "AES")
+        val transformations = listOf(
+            ZhjCipherConfig("AES/ECB/NoPadding"),
+            ZhjCipherConfig("AES/ECB/PKCS5Padding"),
+            ZhjCipherConfig("AES/CBC/PKCS5Padding", IvParameterSpec(ByteArray(16)))
+        )
+
+        transformations.forEach { config ->
+            tryDecryptZhjPayload(
+                decodedBytes = decodedBytes,
+                keySpec = keySpec,
+                config = config
+            )?.let { decrypted ->
+                Log.d(TAG, "decryptZhjPayload matched transformation=${config.transformation}")
+                return decrypted
+            }
+        }
+
+        error("No valid ZHJ AES transformation matched")
+    }
+
+    private fun tryDecryptZhjPayload(
+        decodedBytes: ByteArray,
+        keySpec: SecretKeySpec,
+        config: ZhjCipherConfig
+    ): String? =
+        runCatching {
+            val cipher = Cipher.getInstance(config.transformation)
+            if (config.ivSpec != null) {
+                cipher.init(Cipher.DECRYPT_MODE, keySpec, config.ivSpec)
+            } else {
+                cipher.init(Cipher.DECRYPT_MODE, keySpec)
+            }
+            cipher.doFinal(decodedBytes)
+                .toString(Charsets.UTF_8)
+                .trim('\u0000')
+        }.getOrNull()
+            ?.takeIf { it.contains("video.qq.com/?cmd=2", ignoreCase = true) }
+
+    private fun extractPlayUrlFromResponse(html: String, pageUrl: String): String? {
+        val rawPlayUrl = playUrlRegex.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return null
+        val normalized = normalizeUrl(rawPlayUrl, pageUrl)?.replace("\\u0026", "&") ?: return null
+        Log.d(TAG, "extractPlayUrlFromResponse pageUrl=$pageUrl playUrl=$normalized")
+        return normalized
+    }
+
+    private fun build538PlayerUrl(playUrl: String): String? {
+        val normalizedPlayUrl = playUrl.takeIf { it.isNotBlank() } ?: return null
+        val encoded = java.net.URLEncoder.encode(normalizedPlayUrl, Charsets.UTF_8.name())
+        return "https://cloud.yumixiu768.com/player/538.html?id1=$encoded&id2=$encoded"
+    }
+
+    private fun extractQqCallbackName(html: String): String =
+        qqCallbackRegex.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+            ?: "livegetinfo_callback"
+
+    private fun sanitizeQqApiUrl(raw: String, callbackName: String): String {
+        val cleaned = raw
+            .replace("\\u0026", "&")
+            .replace("&amp;", "&")
+            .filterNot { it.isISOControl() }
+            .trim()
+            .trimEnd(';')
+        val withScheme = if (cleaned.startsWith("http://", true) || cleaned.startsWith("https://", true)) {
+            cleaned
+        } else {
+            "https://$cleaned"
+        }
+        val separator = if ('?' in withScheme) '&' else '?'
+        val callbackRegex = Regex("""([?&])callback=[^&]*""", RegexOption.IGNORE_CASE)
+        return if (callbackRegex.containsMatchIn(withScheme)) {
+            withScheme.replace(callbackRegex, "$1callback=$callbackName")
+        } else {
+            "$withScheme${separator}callback=$callbackName"
+        }
+    }
+
+    private fun extractQqApiUrl(decrypted: String): String? {
+        val start = qqVideoUrlStartRegex.find(decrypted)?.range?.first ?: return null
+        val end = findQqApiEnd(decrypted, start)
+        return decrypted.substring(start, end)
+            .substringBefore(" qqUrl=", missingDelimiterValue = decrypted.substring(start, end))
+            .trim()
+            .takeIf { it.isNotBlank() }
+    }
+
+    private fun findQqApiEnd(content: String, startIndex: Int): Int {
+        val lower = content.lowercase()
+        val delimiters = listOf(
+            "\r",
+            "\n",
+            "</script",
+            " qqurl=",
+            "\tqqurl=",
+            " var ",
+            " function ",
+            " document.",
+            " window.",
+            "</body",
+            "</html"
+        )
+        return delimiters.mapNotNull { lower.indexOf(it, startIndex).takeIf { index -> index >= 0 } }
+            .minOrNull()
+            ?: content.length
+    }
+
+    private data class ZhjCipherConfig(
+        val transformation: String,
+        val ivSpec: IvParameterSpec? = null
+    )
 
     private fun resolveRelativeUrl(raw: String, baseUrl: String): String =
         when {
