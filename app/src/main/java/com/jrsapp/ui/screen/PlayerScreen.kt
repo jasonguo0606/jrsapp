@@ -35,9 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -521,11 +518,19 @@ private fun PlayerControlOverlay(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = if (exoPlayer.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    imageVector = Icons.Default.PlayArrow,
                     contentDescription = if (exoPlayer.isPlaying) "暂停" else "播放",
                     tint = Color.White,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(if (exoPlayer.isPlaying) 0.dp else 32.dp)
                 )
+                if (exoPlayer.isPlaying) {
+                    Text(
+                        text = "II",
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -545,6 +550,7 @@ private fun PlayerControlOverlay(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun BottomControlBar(
     exoPlayer: ExoPlayer,
     fullscreen: Boolean,
@@ -606,11 +612,11 @@ private fun BottomControlBar(
                 onClick = onToggleFullscreen,
                 modifier = Modifier.size(48.dp)
             ) {
-                Icon(
-                    imageVector = if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                    contentDescription = if (fullscreen) "退出全屏" else "全屏",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
+                Text(
+                    text = if (fullscreen) "退出" else "全屏",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
