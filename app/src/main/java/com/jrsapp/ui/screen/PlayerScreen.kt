@@ -97,6 +97,15 @@ fun PlayerScreen(
         BackHandler { onBack() }
     }
 
+    val activity = LocalContext.current as? Activity
+    LaunchedEffect(isFullscreen.value) {
+        activity?.requestedOrientation = if (isFullscreen.value) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
     if (isFullscreen.value) {
         Box(
             modifier = Modifier
