@@ -2,19 +2,20 @@ package com.jrsapp.ui.screen
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -23,6 +24,22 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.jrsapp.data.model.Match
+import kotlinx.coroutines.delay
+
+// ── Scoreboard palette ──────────────────────────────────────────────────────
+private val BgBase      = Color(0xFF030303)
+private val BgCard      = Color(0xFF0C0C0C)
+private val BgCardLive  = Color(0xFF0E0C08)
+private val BdrCard     = Color(0xFF1A1A1A)
+private val BdrLive     = Color(0xFF2A1A00)
+private val Divider1    = Color(0xFF111111)
+private val Amber       = Color(0xFFF5A623)
+private val LiveGreen   = Color(0xFF39FF14)
+private val TextTeam    = Color(0xFFAAAAAA)
+private val TextLeague  = Color(0xFF666666)
+private val TextTime    = Color(0xFF5A5A5A)
+private val TextStream  = Color(0xFF4FC3F7)
+private val TabOff      = Color(0xFF666666)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,61 +48,65 @@ fun MatchListScreen(
     viewModel: MatchListViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val filter by viewModel.filter.collectAsStateWithLifecycle()
+    val filter  by viewModel.filter.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("JRS 篮球直播", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1A1A2E),
-                    titleContentColor = Color.White
-                ),
-                actions = {
-                    IconButton(onClick = { viewModel.loadMatches() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = Color.White)
+            Column {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "JRS 篮球直播",
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 3.sp,
+                            color = Amber
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = BgBase,
+                        titleContentColor = Amber
+                    ),
+                    actions = {
+                        IconButton(onClick = { viewModel.loadMatches() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = TabOff)
+                        }
                     }
-                }
-            )
+                )
+                HorizontalDivider(thickness = 2.dp, color = Divider1)
+            }
         },
-        containerColor = Color(0xFF0F0F23)
+        containerColor = BgBase
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // 联赛筛选 Tab
-            LeagueFilterTabs(
-                selected = filter,
-                onSelect = { viewModel.setFilter(it) }
-            )
+            ScoreboardTabs(selected = filter, onSelect = { viewModel.setFilter(it) })
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when (val state = uiState) {
-                    is MatchListUiState.Loading -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center),
-                            color = Color(0xFFE88C23)
-                        )
-                    }
+                    is MatchListUiState.Loading -> CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Amber
+                    )
 
-                    is MatchListUiState.Error -> {
-                        ErrorView(
-                            message = state.message,
-                            onRetry = { viewModel.loadMatches() },
-                            currentDomain = state.currentDomain,
-                            backupDomains = state.backupDomains,
-                            onSwitchDomain = viewModel::switchDomain,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
+                    is MatchListUiState.Error -> ErrorView(
+                        message = state.message,
+                        onRetry = { viewModel.loadMatches() },
+                        currentDomain = state.currentDomain,
+                        backupDomains = state.backupDomains,
+                        onSwitchDomain = viewModel::switchDomain,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
 
                     is MatchListUiState.Success -> {
                         if (state.matches.isEmpty()) {
                             Text(
                                 text = "暂无 ${filter.label} 比赛",
-                                color = Color.Gray,
+                                color = TextLeague,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         } else {
@@ -99,60 +120,64 @@ fun MatchListScreen(
 }
 
 @Composable
-private fun LeagueFilterTabs(
-    selected: LeagueFilter,
-    onSelect: (LeagueFilter) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF1A1A2E))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        LeagueFilter.entries.forEach { f ->
-            val isSelected = f == selected
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(if (isSelected) Color(0xFFE88C23) else Color(0xFF2A2A4A))
-                    .clickable { onSelect(f) }
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = f.label,
-                    color = if (isSelected) Color.White else Color.Gray,
-                    fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                )
+private fun ScoreboardTabs(selected: LeagueFilter, onSelect: (LeagueFilter) -> Unit) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(BgBase)
+        ) {
+            LeagueFilter.entries.forEach { f ->
+                val isSelected = f == selected
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelect(f) },
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = f.label,
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        color = if (isSelected) Amber else TabOff,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 2.sp
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .background(if (isSelected) Amber else Color.Transparent)
+                    )
+                }
             }
         }
+        HorizontalDivider(thickness = 1.dp, color = Divider1)
     }
 }
 
 @Composable
 private fun MatchList(matches: List<Match>, onMatchClick: (Match) -> Unit) {
     LazyColumn(
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         items(matches, key = { it.id }) { match ->
-            MatchCard(match = match, onClick = { onMatchClick(match) })
+            ScoreboardCard(match = match, onClick = { onMatchClick(match) })
         }
     }
 }
 
 @Composable
-private fun MatchCard(match: Match, onClick: () -> Unit) {
-    Card(
+private fun ScoreboardCard(match: Match, onClick: () -> Unit) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E3A))
+            .clickable(onClick = onClick)
+            .border(1.dp, if (match.isLive) BdrLive else BdrCard)
+            .background(if (match.isLive) BgCardLive else BgCard)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -160,35 +185,93 @@ private fun MatchCard(match: Match, onClick: () -> Unit) {
             ) {
                 Text(
                     text = match.league,
-                    color = Color(0xFFE88C23),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
+                    color = TextLeague,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 3.sp
                 )
-                if (match.isLive) {
-                    LiveBadge()
-                } else {
-                    Text(text = match.time, color = Color.Gray, fontSize = 12.sp)
-                }
+                if (match.isLive) LiveIndicator()
+                else Text(
+                    text = match.time,
+                    color = TextTime,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                TeamInfo(name = match.homeTeam, logoUrl = match.homeLogoUrl, modifier = Modifier.weight(1f))
-                ScoreBox(score = match.score, isLive = match.isLive)
-                TeamInfo(name = match.awayTeam, logoUrl = match.awayLogoUrl, modifier = Modifier.weight(1f), alignEnd = true)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ScoreboardLogo(url = match.homeLogoUrl)
+                    Spacer(modifier = Modifier.width(7.dp))
+                    Text(
+                        text = match.homeTeam,
+                        color = TextTeam,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Box(
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (match.isLive && match.score.isNotBlank()) {
+                        Text(
+                            text = match.score,
+                            color = Amber,
+                            fontSize = 17.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 2.sp
+                        )
+                    } else {
+                        Text(
+                            text = "VS",
+                            color = TextTime,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = match.awayTeam,
+                        color = TextTeam,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(7.dp))
+                    ScoreboardLogo(url = match.awayLogoUrl)
+                }
             }
 
             if (match.streamUrls.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(thickness = 1.dp, color = Divider1)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "${match.streamUrls.size} 条直播线路  >",
-                    color = Color(0xFF4FC3F7),
-                    fontSize = 12.sp
+                    text = "[ ${match.streamUrls.size} 条播放线路 ] ›",
+                    color = TextStream,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp
                 )
             }
         }
@@ -196,76 +279,46 @@ private fun MatchCard(match: Match, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TeamInfo(
-    name: String,
-    logoUrl: String,
-    modifier: Modifier = Modifier,
-    alignEnd: Boolean = false
-) {
+private fun LiveIndicator() {
+    var dotVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(800)
+            dotVisible = !dotVisible
+        }
+    }
     Row(
-        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (alignEnd) Arrangement.End else Arrangement.Start
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        if (!alignEnd) {
-            TeamLogo(logoUrl)
-            Spacer(modifier = Modifier.width(6.dp))
-        }
-        Text(
-            text = name,
-            color = Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+        Box(
+            modifier = Modifier
+                .size(5.dp)
+                .background(
+                    color = if (dotVisible) LiveGreen else Color.Transparent,
+                    shape = CircleShape
+                )
         )
-        if (alignEnd) {
-            Spacer(modifier = Modifier.width(6.dp))
-            TeamLogo(logoUrl)
-        }
+        Text(
+            text = "LIVE",
+            color = LiveGreen,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 1.sp
+        )
     }
 }
 
 @Composable
-private fun TeamLogo(url: String) {
+private fun ScoreboardLogo(url: String) {
     AsyncImage(
         model = url,
         contentDescription = null,
         modifier = Modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(4.dp))
+            .size(32.dp)
+            .border(1.dp, Color(0xFF1F1F1F))
+            .background(Color(0xFF111111))
     )
-}
-
-@Composable
-private fun ScoreBox(score: String, isLive: Boolean) {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 8.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (isLive) Color(0xFF2A2A4A) else Color.Transparent)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = if (score.isBlank()) "vs" else score,
-            color = if (isLive) Color.White else Color.Gray,
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp
-        )
-    }
-}
-
-@Composable
-private fun LiveBadge() {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFFE53935))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-    ) {
-        Text(text = "直播中", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
 }
 
 @Composable
@@ -278,41 +331,43 @@ private fun ErrorView(
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier,
+        modifier = modifier.padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = "加载失败: $message", color = Color.Gray, fontSize = 14.sp)
         Text(
-            text = "当前域名: $currentDomain",
-            color = Color(0xFF4FC3F7),
-            fontSize = 12.sp
+            text = "ERROR: $message",
+            color = TabOff,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = "HOST: $currentDomain",
+            color = TextStream,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace
         )
         Button(
             onClick = onRetry,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE88C23))
+            colors = ButtonDefaults.buttonColors(containerColor = Amber)
         ) {
-            Text("重试")
+            Text("RETRY", fontFamily = FontFamily.Monospace, color = Color.Black, letterSpacing = 2.sp)
         }
         if (backupDomains.isNotEmpty()) {
             Text(
-                text = "主域名不可用时，可切换备用域名",
-                color = Color.Gray,
-                fontSize = 12.sp
+                text = "── 备用节点 ──",
+                color = TabOff,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 2.sp
             )
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                backupDomains.forEach { domain ->
-                    OutlinedButton(
-                        onClick = { onSwitchDomain(domain) },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFF4FC3F7))
-                    ) {
-                        Text(domain, fontSize = 12.sp)
-                    }
+            backupDomains.forEach { domain ->
+                OutlinedButton(
+                    onClick = { onSwitchDomain(domain) },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = BorderStroke(1.dp, Divider1)
+                ) {
+                    Text(domain, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = TextStream)
                 }
             }
         }

@@ -15,6 +15,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
@@ -66,6 +68,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,6 +93,17 @@ import com.jrsapp.data.repository.DlnaRepository
 import kotlinx.coroutines.delay
 
 private const val PLAYER_TAG = "NativePlayer"
+
+// ── Scoreboard palette (mirrors MatchListScreen) ─────────────────────────────
+private val PBgBase    = Color(0xFF030303)
+private val PBgCard    = Color(0xFF0C0C0C)
+private val PBdrCard   = Color(0xFF1A1A1A)
+private val PBdrLive   = Color(0xFF2A1A00)
+private val PDivider   = Color(0xFF111111)
+private val PAmber     = Color(0xFFF5A623)
+private val PTextTeam  = Color(0xFFAAAAAA)
+private val PTextSub   = Color(0xFF666666)
+private val PTextStream = Color(0xFF4FC3F7)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -168,41 +182,51 @@ fun PlayerScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0F0F23))
+            .background(PBgBase)
     ) {
-        TopAppBar(
-            title = {
-                Column {
-                    Text(
-                        text = "${match.homeTeam} vs ${match.awayTeam}",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Text(text = match.league, fontSize = 12.sp, color = Color.Gray)
-                }
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
-                }
-            },
-            actions = {
-                IconButton(
-                    onClick = {
-                        showCastDialog = true
-                        viewModel.discoverDevices()
+        Column {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "${match.homeTeam} vs ${match.awayTeam}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = match.league,
+                            fontSize = 10.sp,
+                            color = PTextSub,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 2.sp
+                        )
                     }
-                ) {
-                    Icon(
-                        Icons.Default.Cast,
-                        contentDescription = "投屏",
-                        tint = if (uiState.selectedDlnaDevice != null) Color(0xFF4FC3F7) else Color.White
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1A1A2E))
-        )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = PTextSub)
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            showCastDialog = true
+                            viewModel.discoverDevices()
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.Cast,
+                            contentDescription = "投屏",
+                            tint = if (uiState.selectedDlnaDevice != null) PTextStream else PTextSub
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PBgBase)
+            )
+            HorizontalDivider(thickness = 2.dp, color = PDivider)
+        }
 
         if (uiState.selectedDlnaDevice != null || uiState.castMessage != null) {
             CastStatusCard(
@@ -226,9 +250,11 @@ fun PlayerScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "切换线路",
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold,
+            text = "── 切换线路",
+            color = PTextSub,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 2.sp,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
         Spacer(modifier = Modifier.height(8.dp))
@@ -240,15 +266,16 @@ fun PlayerScreen(
                 val isSelected = index == uiState.selectedLineIndex
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) Color(0xFFE88C23) else Color(0xFF1E1E3A))
+                        .border(1.dp, if (isSelected) PAmber else PBdrCard)
+                        .background(if (isSelected) Color(0xFF1C1000) else PBgCard)
                         .clickable { viewModel.selectLine(index) }
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
                         text = link.label,
-                        color = if (isSelected) Color.White else Color.Gray,
-                        fontSize = 13.sp,
+                        color = if (isSelected) PAmber else PTextSub,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                     )
                 }
@@ -259,9 +286,11 @@ fun PlayerScreen(
             uiState.loadingPlaybackPage -> {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "正在加载该线路下的直播线路...",
-                    color = Color.Gray,
-                    fontSize = 13.sp,
+                    text = "正在加载...",
+                    color = PTextSub,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
@@ -269,9 +298,11 @@ fun PlayerScreen(
             uiState.subLines.isNotEmpty() -> {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "选择直播线路",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "── 选择直播线路",
+                    color = PTextSub,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 2.sp,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -283,15 +314,16 @@ fun PlayerScreen(
                         val isSelected = index == uiState.selectedSubLineIndex
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSelected) Color(0xFF4FC3F7) else Color(0xFF1E1E3A))
+                                .border(1.dp, if (isSelected) PTextStream else PBdrCard)
+                                .background(if (isSelected) Color(0xFF071520) else PBgCard)
                                 .clickable { viewModel.selectSubLine(index) }
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
                                 text = link.label,
-                                color = if (isSelected) Color.White else Color.Gray,
-                                fontSize = 13.sp,
+                                color = if (isSelected) PTextStream else PTextSub,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
                         }
@@ -322,7 +354,7 @@ private fun NativePlayerSection(
         color = Color(0xFF070B14),
         tonalElevation = 0.dp,
         shadowElevation = if (fullscreen) 0.dp else 10.dp,
-        border = if (fullscreen) null else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+        border = if (fullscreen) null else BorderStroke(1.dp, PBdrCard)
     ) {
         Box(
             modifier = if (fullscreen) {
@@ -346,7 +378,7 @@ private fun NativePlayerSection(
                 )
                 resolving -> CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center),
-                    color = Color(0xFFFF9B3D)
+                    color = PAmber
                 )
                 errorMessage != null -> PlayerErrorView(
                     message = errorMessage,
@@ -355,11 +387,11 @@ private fun NativePlayerSection(
                 )
                 else -> Text(
                     text = "暂无可播放视频源",
-                    color = Color.Gray,
+                    color = PTextSub,
+                    fontFamily = FontFamily.Monospace,
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
-
         }
     }
 }
@@ -646,49 +678,60 @@ private fun CastStatusCard(
     onStop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF13293D),
-        border = BorderStroke(1.dp, Color(0xFF2E5D7B))
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .border(1.dp, if (deviceName != null) PBdrLive else PBdrCard)
+            .background(PBgCard)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.Cast,
                 contentDescription = null,
-                tint = Color(0xFF7FD3FF)
+                tint = PTextStream,
+                modifier = Modifier.size(18.dp)
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = deviceName?.let { "正在投屏到 $it" } ?: "投屏状态",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
+                    text = deviceName?.let { "投屏到 $it" } ?: "投屏状态",
+                    color = PTextTeam,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 0.5.sp
                 )
                 val detail = when {
-                    busy -> "正在和设备通信..."
+                    busy -> "正在通信..."
                     !message.isNullOrBlank() -> message
                     else -> "电视端正在拉取当前线路"
                 }
                 Text(
                     text = detail,
-                    color = Color(0xFFB7CCE0),
-                    fontSize = 12.sp
+                    color = PTextSub,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 1.sp
                 )
             }
             if (deviceName != null) {
                 OutlinedButton(
                     onClick = onStop,
                     enabled = !busy,
-                    border = BorderStroke(1.dp, Color(0xFF7FD3FF))
+                    border = BorderStroke(1.dp, PAmber),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
-                    Text(text = "停止", color = Color.White)
+                    Text(
+                        text = "STOP",
+                        color = PAmber,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 2.sp
+                    )
                 }
             }
         }
@@ -706,17 +749,24 @@ private fun CastDeviceDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF121A2A),
+        containerColor = PBgCard,
         title = {
-            Text(text = "选择投屏设备", color = Color.White)
+            Text(
+                text = "选择投屏设备",
+                color = PAmber,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 2.sp
+            )
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (currentDevice != null) {
                     Text(
                         text = "当前设备：$currentDevice",
-                        color = Color(0xFF7FD3FF),
-                        fontSize = 12.sp
+                        color = PTextStream,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp
                     )
                 }
                 if (discovering) {
@@ -725,37 +775,49 @@ private fun CastDeviceDialog(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
-                            color = Color(0xFFFF9B3D)
+                            color = PAmber
                         )
-                        Text(text = "正在搜索同一 Wi-Fi 下的电视...", color = Color.Gray, fontSize = 13.sp)
+                        Text(
+                            text = "正在搜索同一 Wi-Fi 下的电视...",
+                            color = PTextSub,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
                 }
                 if (!discovering && devices.isEmpty()) {
-                    Text(text = "暂未发现设备，可以刷新后重试。", color = Color.Gray, fontSize = 13.sp)
+                    Text(
+                        text = "暂未发现设备，请刷新后重试。",
+                        color = PTextSub,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
                 devices.forEach { device ->
-                    Surface(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelect(device) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF1B2840),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+                            .border(1.dp, PBdrCard)
+                            .background(PBgBase)
+                            .clickable { onSelect(device) }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
-                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Column {
                             Text(
                                 text = device.friendlyName,
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold
+                                color = PTextTeam,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
                             )
                             val subtitle = listOfNotNull(device.manufacturer, device.modelName).joinToString(" / ")
                             if (subtitle.isNotBlank()) {
                                 Text(
                                     text = subtitle,
-                                    color = Color.Gray,
-                                    fontSize = 12.sp
+                                    color = PTextSub,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
                                 )
                             }
                         }
@@ -764,23 +826,26 @@ private fun CastDeviceDialog(
             }
         },
         confirmButton = {
-            OutlinedButton(onClick = onRefresh) {
+            OutlinedButton(
+                onClick = onRefresh,
+                border = BorderStroke(1.dp, PBdrCard)
+            ) {
                 Icon(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
+                    tint = PTextSub,
+                    modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("刷新", color = Color.White)
+                Text("刷新", color = PTextSub, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
             }
         },
         dismissButton = {
             Button(
                 onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE88C23))
+                colors = ButtonDefaults.buttonColors(containerColor = PAmber)
             ) {
-                Text("关闭")
+                Text("关闭", color = Color.Black, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
             }
         }
     )
@@ -893,12 +958,22 @@ private fun PlayerErrorView(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = message, color = Color.Gray, fontSize = 14.sp)
+        Text(
+            text = "ERROR: $message",
+            color = PTextSub,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace
+        )
         Button(
             onClick = onRetry,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE88C23))
+            colors = ButtonDefaults.buttonColors(containerColor = PAmber)
         ) {
-            Text("重新解析")
+            Text(
+                text = "RETRY",
+                color = Color.Black,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 2.sp
+            )
         }
     }
 }
