@@ -57,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,6 +72,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -394,6 +398,25 @@ private fun NativePlayer(
             }
     }
     var keepScreenOn by remember(exoPlayer) { mutableStateOf(exoPlayer.shouldKeepScreenOnForPlayback()) }
+    var userPaused by remember(exoPlayer) { mutableStateOf(false) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val userPausedState = rememberUpdatedState(userPaused)
+    val isCastingState = rememberUpdatedState(isCasting)
+
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && !userPausedState.value && !isCastingState.value) {
+                when (exoPlayer.playbackState) {
+                    Player.STATE_IDLE -> { exoPlayer.prepare(); exoPlayer.play() }
+                    Player.STATE_ENDED -> { exoPlayer.seekToDefaultPosition(); exoPlayer.prepare(); exoPlayer.play() }
+                    else -> exoPlayer.play()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(isCasting, exoPlayer) {
         if (isCasting) {
@@ -456,6 +479,7 @@ private fun NativePlayer(
             fullscreen = fullscreen,
             onToggleFullscreen = onToggleFullscreen,
             isCasting = isCasting,
+            onUserPlayPauseToggle = { userPaused = exoPlayer.isPlaying },
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -467,6 +491,7 @@ private fun PlayerControlOverlay(
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     isCasting: Boolean,
+    onUserPlayPauseToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var controlsVisible by remember { mutableStateOf(false) }
@@ -508,6 +533,7 @@ private fun PlayerControlOverlay(
                     .background(Color(0x80000000), CircleShape)
                     .clickable {
                         if (isCasting) return@clickable
+                        onUserPlayPauseToggle()
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     },
                 contentAlignment = Alignment.Center
