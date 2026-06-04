@@ -9,11 +9,11 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -29,12 +29,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -42,6 +46,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -77,6 +82,7 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.model.VideoSource
+import com.jrsapp.data.repository.DlnaRepository
 import kotlinx.coroutines.delay
 
 private const val PLAYER_TAG = "NativePlayer"
@@ -87,11 +93,24 @@ fun PlayerScreen(
     match: Match,
     onBack: () -> Unit
 ) {
-    val viewModel: PlayerViewModel = viewModel(key = match.id, factory = PlayerViewModelFactory(match))
+    val context = LocalContext.current
+    val dlnaRepository = remember(context) { DlnaRepository(context) }
+    val viewModel: PlayerViewModel = viewModel(
+        key = match.id,
+        factory = PlayerViewModelFactory(match, dlnaRepository)
+    )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isFullscreenState = rememberSaveable { mutableStateOf(false) }
     val isFullscreen = isFullscreenState.value
-    val activity = LocalContext.current.findActivity()
+    val activity = context.findActivity()
+    var showCastDialog by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.castMessage) {
+        if (uiState.castMessage != null) {
+            delay(2200)
+            viewModel.clearCastMessage()
+        }
+    }
 
     DisposableEffect(activity, isFullscreen) {
         activity?.requestedOrientation =
@@ -116,13 +135,28 @@ fun PlayerScreen(
         }
     }
 
+    if (showCastDialog) {
+        CastDeviceDialog(
+            devices = uiState.dlnaDevices,
+            discovering = uiState.discoveringDevices,
+            currentDevice = uiState.selectedDlnaDevice?.friendlyName,
+            onDismiss = { showCastDialog = false },
+            onRefresh = viewModel::discoverDevices,
+            onSelect = { device ->
+                viewModel.castToDevice(device)
+                showCastDialog = false
+            }
+        )
+    }
+
     if (isFullscreen) {
         FullscreenPlayerLayout(
             source = uiState.currentSource,
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
-            onExitFullscreen = { isFullscreenState.value = false }
+            onExitFullscreen = { isFullscreenState.value = false },
+            isCasting = uiState.selectedDlnaDevice != null
         )
         return
     }
@@ -149,8 +183,32 @@ fun PlayerScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color.White)
                 }
             },
+            actions = {
+                IconButton(
+                    onClick = {
+                        showCastDialog = true
+                        viewModel.discoverDevices()
+                    }
+                ) {
+                    Icon(
+                        Icons.Default.Cast,
+                        contentDescription = "投屏",
+                        tint = if (uiState.selectedDlnaDevice != null) Color(0xFF4FC3F7) else Color.White
+                    )
+                }
+            },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1A1A2E))
         )
+
+        if (uiState.selectedDlnaDevice != null || uiState.castMessage != null) {
+            CastStatusCard(
+                deviceName = uiState.selectedDlnaDevice?.friendlyName,
+                message = uiState.castMessage,
+                busy = uiState.castingInProgress,
+                onStop = viewModel::stopCasting,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+        }
 
         NativePlayerSection(
             source = uiState.currentSource,
@@ -158,7 +216,8 @@ fun PlayerScreen(
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
             fullscreen = false,
-            onToggleFullscreen = { isFullscreenState.value = true }
+            onToggleFullscreen = { isFullscreenState.value = true },
+            isCasting = uiState.selectedDlnaDevice != null
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -248,7 +307,8 @@ private fun NativePlayerSection(
     errorMessage: String?,
     onRetry: () -> Unit,
     fullscreen: Boolean,
-    onToggleFullscreen: () -> Unit
+    onToggleFullscreen: () -> Unit,
+    isCasting: Boolean
 ) {
     Surface(
         modifier = Modifier
@@ -277,6 +337,7 @@ private fun NativePlayerSection(
                     source = source,
                     fullscreen = fullscreen,
                     onToggleFullscreen = onToggleFullscreen,
+                    isCasting = isCasting,
                     modifier = Modifier.fillMaxSize()
                 )
                 resolving -> CircularProgressIndicator(
@@ -304,6 +365,7 @@ private fun NativePlayer(
     source: VideoSource,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
+    isCasting: Boolean,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -332,6 +394,14 @@ private fun NativePlayer(
             }
     }
     var keepScreenOn by remember(exoPlayer) { mutableStateOf(exoPlayer.shouldKeepScreenOnForPlayback()) }
+
+    LaunchedEffect(isCasting, exoPlayer) {
+        if (isCasting) {
+            exoPlayer.pause()
+        } else if (exoPlayer.playbackState != Player.STATE_ENDED) {
+            exoPlayer.play()
+        }
+    }
 
     DisposableEffect(exoPlayer) {
         onDispose {
@@ -385,6 +455,7 @@ private fun NativePlayer(
             exoPlayer = exoPlayer,
             fullscreen = fullscreen,
             onToggleFullscreen = onToggleFullscreen,
+            isCasting = isCasting,
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -395,6 +466,7 @@ private fun PlayerControlOverlay(
     exoPlayer: ExoPlayer,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
+    isCasting: Boolean,
     modifier: Modifier = Modifier
 ) {
     var controlsVisible by remember { mutableStateOf(false) }
@@ -435,6 +507,7 @@ private fun PlayerControlOverlay(
                     .size(56.dp)
                     .background(Color(0x80000000), CircleShape)
                     .clickable {
+                        if (isCasting) return@clickable
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                     },
                 contentAlignment = Alignment.Center
@@ -503,7 +576,8 @@ private fun FullscreenPlayerLayout(
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
-    onExitFullscreen: () -> Unit
+    onExitFullscreen: () -> Unit,
+    isCasting: Boolean
 ) {
     Box(
         modifier = Modifier
@@ -517,7 +591,8 @@ private fun FullscreenPlayerLayout(
             errorMessage = errorMessage,
             onRetry = onRetry,
             fullscreen = true,
-            onToggleFullscreen = onExitFullscreen
+            onToggleFullscreen = onExitFullscreen,
+            isCasting = isCasting
         )
 
         IconButton(
@@ -535,6 +610,154 @@ private fun FullscreenPlayerLayout(
             )
         }
     }
+}
+
+@Composable
+private fun CastStatusCard(
+    deviceName: String?,
+    message: String?,
+    busy: Boolean,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF13293D),
+        border = BorderStroke(1.dp, Color(0xFF2E5D7B))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Cast,
+                contentDescription = null,
+                tint = Color(0xFF7FD3FF)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = deviceName?.let { "正在投屏到 $it" } ?: "投屏状态",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+                val detail = when {
+                    busy -> "正在和设备通信..."
+                    !message.isNullOrBlank() -> message
+                    else -> "电视端正在拉取当前线路"
+                }
+                Text(
+                    text = detail,
+                    color = Color(0xFFB7CCE0),
+                    fontSize = 12.sp
+                )
+            }
+            if (deviceName != null) {
+                OutlinedButton(
+                    onClick = onStop,
+                    enabled = !busy,
+                    border = BorderStroke(1.dp, Color(0xFF7FD3FF))
+                ) {
+                    Text(text = "停止", color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CastDeviceDialog(
+    devices: List<com.jrsapp.data.model.DlnaDevice>,
+    discovering: Boolean,
+    currentDevice: String?,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
+    onSelect: (com.jrsapp.data.model.DlnaDevice) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF121A2A),
+        title = {
+            Text(text = "选择投屏设备", color = Color.White)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (currentDevice != null) {
+                    Text(
+                        text = "当前设备：$currentDevice",
+                        color = Color(0xFF7FD3FF),
+                        fontSize = 12.sp
+                    )
+                }
+                if (discovering) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFFFF9B3D)
+                        )
+                        Text(text = "正在搜索同一 Wi-Fi 下的电视...", color = Color.Gray, fontSize = 13.sp)
+                    }
+                }
+                if (!discovering && devices.isEmpty()) {
+                    Text(text = "暂未发现设备，可以刷新后重试。", color = Color.Gray, fontSize = 13.sp)
+                }
+                devices.forEach { device ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(device) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF1B2840),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Text(
+                                text = device.friendlyName,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            val subtitle = listOfNotNull(device.manufacturer, device.modelName).joinToString(" / ")
+                            if (subtitle.isNotBlank()) {
+                                Text(
+                                    text = subtitle,
+                                    color = Color.Gray,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            OutlinedButton(onClick = onRefresh) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("刷新", color = Color.White)
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE88C23))
+            ) {
+                Text("关闭")
+            }
+        }
+    )
 }
 
 private fun playbackStateName(state: Int): String =
