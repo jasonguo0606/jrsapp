@@ -28,7 +28,7 @@ object PlaybackPageParser {
 
     private val purlHostRegex = Regex("""var\s+purl\s*=\s*["']\/\/([^"'\\]+)["']\s*\+\s*id""", RegexOption.IGNORE_CASE)
     private val kbmmIframeRegex = Regex("""src=['"]/play/kbmm\.php\?id=['"]\s*\+\s*id\s*\+\s*['"]""", RegexOption.IGNORE_CASE)
-    private val encodedStrRegex = Regex("""var\s+encodedStr\s*=\s*'([^']+)'""", RegexOption.IGNORE_CASE)
+    private val encodedStrRegex = Regex("""var\s+encodedStr\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val zhjEncryptedRegex = Regex("""var\s+encryptedBase64Str\s*=\s*'([^']+)'""", RegexOption.IGNORE_CASE)
     private val iframeSrcRegex = Regex("""src=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
     private val qqCallbackRegex = Regex("""var\s+livegetinfo_callback\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
@@ -39,6 +39,7 @@ object PlaybackPageParser {
         val normalizedHtml = html.replace("\\/", "/")
         val doc = Jsoup.parse(normalizedHtml, pageUrl)
         val subLines = mutableListOf<StreamLink>()
+        var hasFilteredCommentary = false
 
         Log.d(TAG, "extractPlaybackPage pageUrl=$pageUrl htmlLen=${html.length}")
 
@@ -62,6 +63,7 @@ object PlaybackPageParser {
                                 return@forEach
                             }
                             if (!shouldKeepSubLineLabel(label)) {
+                                hasFilteredCommentary = true
                                 Log.d(TAG, "skip filtered subLine label=$label candidate=$candidate")
                                 return@forEach
                             }
@@ -81,7 +83,7 @@ object PlaybackPageParser {
         extractNestedPageUrls(html, pageUrl)
             .filter { isSubLinePage(it, pageUrl) }
             .forEachIndexed { index, candidate ->
-                if (shouldKeepGeneratedSubLine(subLines.isEmpty())) {
+                if (subLines.isEmpty() && !hasFilteredCommentary) {
                     addSubLine(
                         subLines = subLines,
                         label = "子线路${index + 1}",
@@ -92,7 +94,8 @@ object PlaybackPageParser {
 
         val result = PlaybackPage(
             pageUrl = pageUrl,
-            subLines = subLines.toList()
+            subLines = subLines.toList(),
+            hasFilteredCommentary = hasFilteredCommentary
         )
         Log.d(TAG, "extractPlaybackPage subLines=${result.subLines}")
         return result
@@ -114,14 +117,22 @@ object PlaybackPageParser {
         return !normalized.contains("主播") && !normalized.contains("解说")
     }
 
-    private fun shouldKeepGeneratedSubLine(hasNoExplicitSubLines: Boolean): Boolean = hasNoExplicitSubLines
-
     fun extractVideoSources(html: String, pageUrl: String): List<VideoSource> {
         val normalizedHtml = html.replace("\\/", "/")
         val doc = Jsoup.parse(normalizedHtml, pageUrl)
         val directUrls = linkedSetOf<String>()
 
         Log.d(TAG, "extractVideoSources pageUrl=$pageUrl htmlLen=${html.length}")
+
+        val pagePath = Uri.parse(pageUrl).path.orEmpty()
+        if (pagePath.startsWith("/play/pao/", ignoreCase = true) ||
+            pagePath.startsWith("/play/wen/", ignoreCase = true)
+        ) {
+            encodedStrRegex.find(normalizedHtml)?.groupValues?.getOrNull(1)
+                ?.let(::decryptPapsUrl)
+                ?.takeIf(::isMediaUrl)
+                ?.let(directUrls::add)
+        }
 
         extractDirectMediaUrl(pageUrl, pageUrl)?.let { resolved ->
             Log.d(TAG, "pageUrl resolved directly pageUrl=$pageUrl resolved=$resolved")
@@ -403,7 +414,7 @@ object PlaybackPageParser {
         val host = uri?.host.orEmpty().lowercase()
         val path = uri?.path.orEmpty().lowercase()
 
-        if (host.contains("sportsteam") && path.startsWith("/play/")) return true
+        if ((host.contains("sportsteam") || host.contains("jw1104")) && path.startsWith("/play/")) return true
         if (host.contains("yumixiu768.com") && path.contains("/player/")) return true
         if (host.contains("szsummer.cn") && path.startsWith("/live/")) return true
         if (host.contains("lhrhgb.com") && path.startsWith("/vlive/")) return true
@@ -435,6 +446,8 @@ object PlaybackPageParser {
             path.contains("/play/y.php") ||
             path.contains("/play/j.php") ||
             path.contains("/play/mgxl.php") ||
+            path.startsWith("/play/wen/") ||
+            path.startsWith("/play/pao/") ||
             path.contains("/play/p/zhj_j.php") ||
             path.contains("/play/a") ||
             path.contains("/player/pap.html") ||

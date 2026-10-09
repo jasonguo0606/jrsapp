@@ -173,6 +173,7 @@ fun PlayerScreen(
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
+            onPlaybackError = viewModel::onPlaybackError,
             onExitFullscreen = { isFullscreenState.value = false },
             isCasting = uiState.selectedDlnaDevice != null
         )
@@ -243,6 +244,7 @@ fun PlayerScreen(
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
+            onPlaybackError = viewModel::onPlaybackError,
             fullscreen = false,
             onToggleFullscreen = { isFullscreenState.value = true },
             isCasting = uiState.selectedDlnaDevice != null
@@ -342,6 +344,7 @@ private fun NativePlayerSection(
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
+    onPlaybackError: (VideoSource) -> Unit,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     isCasting: Boolean
@@ -371,6 +374,7 @@ private fun NativePlayerSection(
             when {
                 source != null -> NativePlayer(
                     source = source,
+                    onPlaybackError = onPlaybackError,
                     fullscreen = fullscreen,
                     onToggleFullscreen = onToggleFullscreen,
                     isCasting = isCasting,
@@ -399,6 +403,7 @@ private fun NativePlayerSection(
 @Composable
 private fun NativePlayer(
     source: VideoSource,
+    onPlaybackError: (VideoSource) -> Unit,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     isCasting: Boolean,
@@ -406,6 +411,7 @@ private fun NativePlayer(
 ) {
     val context = LocalContext.current
     val activity = context.findActivity()
+    val onPlaybackErrorState = rememberUpdatedState(onPlaybackError)
     val exoPlayer = remember(source.url, source.referer) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
@@ -424,7 +430,7 @@ private fun NativePlayer(
                 val mediaItemBuilder = MediaItem.Builder().setUri(source.url)
                 mimeType?.let(mediaItemBuilder::setMimeType)
                 setMediaItem(mediaItemBuilder.build())
-                addListener(buildPlayerLogger(this))
+                addListener(buildPlayerLogger(this) { onPlaybackErrorState.value(source) })
                 playWhenReady = true
                 prepare()
             }
@@ -634,6 +640,7 @@ private fun FullscreenPlayerLayout(
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
+    onPlaybackError: (VideoSource) -> Unit,
     onExitFullscreen: () -> Unit,
     isCasting: Boolean
 ) {
@@ -648,6 +655,7 @@ private fun FullscreenPlayerLayout(
             resolving = resolving,
             errorMessage = errorMessage,
             onRetry = onRetry,
+            onPlaybackError = onPlaybackError,
             fullscreen = true,
             onToggleFullscreen = onExitFullscreen,
             isCasting = isCasting
@@ -885,7 +893,7 @@ private fun mediaMimeType(source: VideoSource): String? =
         com.jrsapp.data.model.VideoSourceType.UNKNOWN -> null
     }
 
-private fun buildPlayerLogger(player: ExoPlayer): Player.Listener =
+private fun buildPlayerLogger(player: ExoPlayer, onError: () -> Unit): Player.Listener =
     object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             Log.d(
@@ -900,6 +908,7 @@ private fun buildPlayerLogger(player: ExoPlayer): Player.Listener =
                 "playerError code=${error.errorCodeName} message=${error.message}",
                 error
             )
+            onError()
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {

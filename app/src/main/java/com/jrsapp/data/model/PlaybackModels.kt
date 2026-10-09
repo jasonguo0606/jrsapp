@@ -2,7 +2,8 @@ package com.jrsapp.data.model
 
 data class PlaybackPage(
     val pageUrl: String,
-    val subLines: List<StreamLink>
+    val subLines: List<StreamLink>,
+    val hasFilteredCommentary: Boolean = false
 )
 
 enum class VideoSourceType {

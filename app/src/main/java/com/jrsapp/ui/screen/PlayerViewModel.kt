@@ -43,6 +43,8 @@ class PlayerViewModel(
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+    private var playbackRequestId = 0
+    private var autoFallbackEnabled = false
 
     init {
         loadLinePage(0)
@@ -139,19 +141,52 @@ class PlayerViewModel(
     }
 
     fun selectSubLine(index: Int) {
-        if (index == _uiState.value.selectedSubLineIndex) return
-        resolveSubLine(index)
+        val state = _uiState.value
+        if (index == state.selectedSubLineIndex && (state.resolvingSource || state.currentSource != null)) return
+        resolveSubLine(index, allowFallback = false)
     }
 
     fun retry() {
-        if (_uiState.value.selectedSubLineIndex >= 0 && _uiState.value.subLines.isNotEmpty()) {
-            resolveSubLine(_uiState.value.selectedSubLineIndex)
+        if (_uiState.value.subLines.isNotEmpty()) {
+            val index = if (autoFallbackEnabled) 0 else _uiState.value.selectedSubLineIndex.coerceAtLeast(0)
+            resolveSubLine(index, allowFallback = autoFallbackEnabled)
         } else {
             loadLinePage(_uiState.value.selectedLineIndex)
         }
     }
 
+    fun onPlaybackError(source: VideoSource) {
+        val state = _uiState.value
+        if (state.currentSource?.url != source.url) return
+
+        val nextSource = state.resolvedSources
+            .dropWhile { it.url != source.url }
+            .drop(1)
+            .firstOrNull()
+        if (nextSource != null) {
+            _uiState.value = state.copy(currentSource = nextSource)
+            recastIfNeeded(state.selectedDlnaDevice, nextSource)
+        } else {
+            tryNextSubLine("当前线路视频连接失败，请重试或切换线路")
+        }
+    }
+
+    private fun tryNextSubLine(message: String) {
+        val state = _uiState.value
+        val nextIndex = state.selectedSubLineIndex + 1
+        if (autoFallbackEnabled && state.selectedSubLineIndex >= 0 && nextIndex < state.subLines.size) {
+            resolveSubLine(nextIndex, allowFallback = true)
+        } else {
+            _uiState.value = state.copy(
+                resolvingSource = false,
+                currentSource = null,
+                errorMessage = message
+            )
+        }
+    }
+
     private fun loadLinePage(index: Int) {
+        val requestId = ++playbackRequestId
         val line = match.streamUrls.getOrNull(index)
         Log.d(TAG, "loadLinePage index=$index line=${line?.label} url=${line?.url}")
         _uiState.value = _uiState.value.copy(
@@ -176,22 +211,30 @@ class PlayerViewModel(
         viewModelScope.launch {
             playbackRepository.loadPlaybackPage(line.url)
                 .onSuccess { page ->
+                    if (requestId != playbackRequestId) return@onSuccess
                     Log.d(TAG, "loadLinePage success index=$index subLines=${page.subLines}")
                     if (page.subLines.isEmpty()) {
                         _uiState.value = _uiState.value.copy(
                             loadingPlaybackPage = false
                         )
-                        resolvePrimaryLineDirectly(index, line.url)
+                        if (page.hasFilteredCommentary) {
+                            _uiState.value = _uiState.value.copy(
+                                errorMessage = "当前比赛没有可用的非主播解说线路"
+                            )
+                        } else {
+                            resolvePrimaryLineDirectly(index, line.url)
+                        }
                     } else {
                         _uiState.value = _uiState.value.copy(
                             loadingPlaybackPage = false,
                             subLines = page.subLines,
                             selectedSubLineIndex = 0
                         )
-                        resolveSubLine(0)
+                        resolveSubLine(0, allowFallback = true)
                     }
                 }
                 .onFailure { throwable ->
+                    if (requestId != playbackRequestId) return@onFailure
                     Log.e(TAG, "loadLinePage failure index=$index url=${line.url}", throwable)
                     _uiState.value = _uiState.value.copy(
                         loadingPlaybackPage = false,
@@ -202,6 +245,7 @@ class PlayerViewModel(
     }
 
     private fun resolvePrimaryLineDirectly(index: Int, url: String) {
+        val requestId = ++playbackRequestId
         Log.d(TAG, "resolvePrimaryLineDirectly index=$index url=$url")
         _uiState.value = _uiState.value.copy(
             resolvingSource = true,
@@ -213,9 +257,11 @@ class PlayerViewModel(
         viewModelScope.launch {
             playbackRepository.resolveVideoSources(url)
                 .onSuccess { sources ->
+                    if (requestId != playbackRequestId) return@onSuccess
                     applyResolvedSources(index = index, label = "primary", url = url, sources = sources)
                 }
                 .onFailure { throwable ->
+                    if (requestId != playbackRequestId) return@onFailure
                     Log.e(TAG, "resolvePrimaryLineDirectly failure index=$index url=$url", throwable)
                     _uiState.value = _uiState.value.copy(
                         resolvingSource = false,
@@ -225,7 +271,9 @@ class PlayerViewModel(
         }
     }
 
-    private fun resolveSubLine(index: Int) {
+    private fun resolveSubLine(index: Int, allowFallback: Boolean) {
+        val requestId = ++playbackRequestId
+        autoFallbackEnabled = allowFallback
         val subLine = _uiState.value.subLines.getOrNull(index)
         Log.d(TAG, "resolveSubLine index=$index line=${subLine?.label} url=${subLine?.url}")
         _uiState.value = _uiState.value.copy(
@@ -247,14 +295,13 @@ class PlayerViewModel(
         viewModelScope.launch {
             playbackRepository.resolveVideoSources(subLine.url)
                 .onSuccess { sources ->
+                    if (requestId != playbackRequestId) return@onSuccess
                     applyResolvedSources(index = index, label = subLine.label, url = subLine.url, sources = sources)
                 }
                 .onFailure { throwable ->
+                    if (requestId != playbackRequestId) return@onFailure
                     Log.e(TAG, "resolveSubLine failure index=$index url=${subLine.url}", throwable)
-                    _uiState.value = _uiState.value.copy(
-                        resolvingSource = false,
-                        errorMessage = throwable.message ?: "解析播放源失败"
-                    )
+                    tryNextSubLine(throwable.message ?: "解析播放源失败")
                 }
         }
     }
@@ -266,12 +313,13 @@ class PlayerViewModel(
         sources: List<VideoSource>
     ) {
         Log.d(TAG, "resolve success index=$index label=$label url=$url sources=${sources.map { it.url }}")
-        _uiState.value = if (sources.isEmpty()) {
+        if (sources.isEmpty() && _uiState.value.subLines.isNotEmpty()) {
             Log.d(TAG, "resolve empty sources index=$index label=$label")
-            _uiState.value.copy(
-                resolvingSource = false,
-                errorMessage = "当前线路未解析到可播放视频源"
-            )
+            tryNextSubLine("高清线路没有可播放视频源，请稍后重试")
+            return
+        }
+        _uiState.value = if (sources.isEmpty()) {
+            _uiState.value.copy(resolvingSource = false, errorMessage = "当前线路未解析到可播放视频源")
         } else {
             _uiState.value.copy(
                 resolvingSource = false,
