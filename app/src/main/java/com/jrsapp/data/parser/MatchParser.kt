@@ -39,9 +39,9 @@ object MatchParser {
             Log.d(TAG, "parseItem[$index] data-lid=${el.attr("data-lid")} html=${el.outerHtml().take(500)}")
             val streamLinks = el.select(".lab_channel a")
                 .mapIndexed { i, a ->
-                    val rawUrl = a.attr("data-play").takeIf { it.isNotBlank() && it != "#" && !it.startsWith("javascript:", true) }
-                        ?: a.attr("href")
-                    val normalized = normalizeUrl(rawUrl, baseUrl)
+                    val playUrl = normalizeUrl(a.attr("data-play"), baseUrl)
+                    val normalized = playUrl.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+                        ?: normalizeUrl(a.attr("href"), baseUrl)
                     Log.d(TAG, "parseItem[$index] line${i + 1} href=${a.attr("href")} data-play=${a.attr("data-play")} normalized=$normalized")
                     normalized.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
                         ?.let { StreamLink(label = "线路${i + 1}", url = it) }

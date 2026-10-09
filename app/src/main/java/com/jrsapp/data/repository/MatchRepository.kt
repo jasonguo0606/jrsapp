@@ -3,10 +3,13 @@ package com.jrsapp.data.repository
 import android.util.Log
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.parser.MatchParser
+import com.jrsapp.data.parser.MatchScriptParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.jsoup.Jsoup
+import java.io.IOException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
@@ -26,7 +29,15 @@ class MatchRepository {
                 Log.d(TAG, "domain=$domain HTTP状态码: $code  HTML长度: ${html.length}")
                 Log.d(TAG, "含match-item: ${html.contains("match-item")}  含steam: ${html.contains("steam")}")
                 Log.d(TAG, "HTML前1200字符:\n${html.take(1200)}")
-                MatchParser.parseMatches(html, baseUrl)
+                val matches = MatchParser.parseMatches(html, baseUrl)
+                if (matches.isNotEmpty()) return@runCatching matches
+
+                val scriptUrl = Jsoup.parse(html, baseUrl).select("script[src]")
+                    .map { it.attr("abs:src") }
+                    .firstOrNull { it.substringBefore('?').endsWith("/index.js") }
+                    ?: return@runCatching matches
+                val (_, script) = fetch(scriptUrl)
+                MatchParser.parseMatches(MatchScriptParser.render(html, script), baseUrl)
             }.onFailure {
                 Log.e(TAG, "获取比赛列表失败 domain=$domain", it)
             }
@@ -35,6 +46,7 @@ class MatchRepository {
     private fun fetch(url: String): Pair<Int, String> {
         val request = Request.Builder().url(url).build()
         return client.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}: $url")
             val body = resp.body?.string() ?: ""
             resp.code to body
         }
