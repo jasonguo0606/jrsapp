@@ -10,6 +10,7 @@ import com.jrsapp.data.model.StreamLink
 import com.jrsapp.data.model.VideoSource
 import com.jrsapp.data.repository.DlnaRepository
 import com.jrsapp.data.repository.PlaybackRepository
+import com.jrsapp.util.redactedUrl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,7 @@ class PlayerViewModel(
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
     private var playbackRequestId = 0
     private var autoFallbackEnabled = false
+    private var recoveryAttempted = false
 
     init {
         loadLinePage(0)
@@ -159,6 +161,42 @@ class PlayerViewModel(
         val state = _uiState.value
         if (state.currentSource?.url != source.url) return
 
+        if (!recoveryAttempted) {
+            val pageUrl = state.subLines.getOrNull(state.selectedSubLineIndex)?.url
+                ?: match.streamUrls.getOrNull(state.selectedLineIndex)?.url
+            if (pageUrl != null) {
+                recoveryAttempted = true
+                val requestId = ++playbackRequestId
+                _uiState.value = state.copy(
+                    resolvingSource = true,
+                    currentSource = null,
+                    resolvedSources = emptyList(),
+                    errorMessage = null
+                )
+                viewModelScope.launch {
+                    playbackRepository.resolveVideoSources(pageUrl)
+                        .onSuccess { sources ->
+                            if (requestId != playbackRequestId) return@onSuccess
+                            if (sources.isEmpty()) {
+                                tryNextSubLine("当前线路视频连接失败，请重试或切换线路")
+                            } else {
+                                applyResolvedSources(
+                                    index = state.selectedSubLineIndex,
+                                    label = "recovery",
+                                    url = pageUrl,
+                                    sources = sources
+                                )
+                            }
+                        }
+                        .onFailure {
+                            if (requestId != playbackRequestId) return@onFailure
+                            tryNextSubLine("当前线路视频连接失败，请重试或切换线路")
+                        }
+                }
+                return
+            }
+        }
+
         val nextSource = state.resolvedSources
             .dropWhile { it.url != source.url }
             .drop(1)
@@ -187,8 +225,9 @@ class PlayerViewModel(
 
     private fun loadLinePage(index: Int) {
         val requestId = ++playbackRequestId
+        recoveryAttempted = false
         val line = match.streamUrls.getOrNull(index)
-        Log.d(TAG, "loadLinePage index=$index line=${line?.label} url=${line?.url}")
+        Log.d(TAG, "loadLinePage index=$index line=${line?.label} url=${redactedUrl(line?.url)}")
         _uiState.value = _uiState.value.copy(
             selectedLineIndex = index,
             selectedSubLineIndex = -1,
@@ -212,7 +251,7 @@ class PlayerViewModel(
             playbackRepository.loadPlaybackPage(line.url)
                 .onSuccess { page ->
                     if (requestId != playbackRequestId) return@onSuccess
-                    Log.d(TAG, "loadLinePage success index=$index subLines=${page.subLines}")
+                    Log.d(TAG, "loadLinePage success index=$index subLines=${page.subLines.map { it.label }}")
                     if (page.subLines.isEmpty()) {
                         _uiState.value = _uiState.value.copy(
                             loadingPlaybackPage = false
@@ -235,7 +274,7 @@ class PlayerViewModel(
                 }
                 .onFailure { throwable ->
                     if (requestId != playbackRequestId) return@onFailure
-                    Log.e(TAG, "loadLinePage failure index=$index url=${line.url}", throwable)
+                    Log.e(TAG, "loadLinePage failure index=$index url=${redactedUrl(line.url)} (${throwable.javaClass.simpleName})")
                     _uiState.value = _uiState.value.copy(
                         loadingPlaybackPage = false,
                         errorMessage = throwable.message ?: "加载线路页面失败"
@@ -246,7 +285,8 @@ class PlayerViewModel(
 
     private fun resolvePrimaryLineDirectly(index: Int, url: String) {
         val requestId = ++playbackRequestId
-        Log.d(TAG, "resolvePrimaryLineDirectly index=$index url=$url")
+        recoveryAttempted = false
+        Log.d(TAG, "resolvePrimaryLineDirectly index=$index url=${redactedUrl(url)}")
         _uiState.value = _uiState.value.copy(
             resolvingSource = true,
             currentSource = null,
@@ -262,7 +302,7 @@ class PlayerViewModel(
                 }
                 .onFailure { throwable ->
                     if (requestId != playbackRequestId) return@onFailure
-                    Log.e(TAG, "resolvePrimaryLineDirectly failure index=$index url=$url", throwable)
+                    Log.e(TAG, "resolvePrimaryLineDirectly failure index=$index url=${redactedUrl(url)} (${throwable.javaClass.simpleName})")
                     _uiState.value = _uiState.value.copy(
                         resolvingSource = false,
                         errorMessage = throwable.message ?: "解析播放源失败"
@@ -274,8 +314,9 @@ class PlayerViewModel(
     private fun resolveSubLine(index: Int, allowFallback: Boolean) {
         val requestId = ++playbackRequestId
         autoFallbackEnabled = allowFallback
+        recoveryAttempted = false
         val subLine = _uiState.value.subLines.getOrNull(index)
-        Log.d(TAG, "resolveSubLine index=$index line=${subLine?.label} url=${subLine?.url}")
+        Log.d(TAG, "resolveSubLine index=$index line=${subLine?.label} url=${redactedUrl(subLine?.url)}")
         _uiState.value = _uiState.value.copy(
             selectedSubLineIndex = index,
             resolvingSource = true,
@@ -300,7 +341,7 @@ class PlayerViewModel(
                 }
                 .onFailure { throwable ->
                     if (requestId != playbackRequestId) return@onFailure
-                    Log.e(TAG, "resolveSubLine failure index=$index url=${subLine.url}", throwable)
+                    Log.e(TAG, "resolveSubLine failure index=$index url=${redactedUrl(subLine.url)} (${throwable.javaClass.simpleName})")
                     tryNextSubLine(throwable.message ?: "解析播放源失败")
                 }
         }
@@ -312,7 +353,7 @@ class PlayerViewModel(
         url: String,
         sources: List<VideoSource>
     ) {
-        Log.d(TAG, "resolve success index=$index label=$label url=$url sources=${sources.map { it.url }}")
+        Log.d(TAG, "resolve success index=$index label=$label url=${redactedUrl(url)} sources=${sources.map { redactedUrl(it.url) }}")
         if (sources.isEmpty() && _uiState.value.subLines.isNotEmpty()) {
             Log.d(TAG, "resolve empty sources index=$index label=$label")
             tryNextSubLine("高清线路没有可播放视频源，请稍后重试")

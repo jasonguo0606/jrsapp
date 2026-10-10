@@ -1,5 +1,6 @@
 package com.jrsapp.ui.screen
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jrsapp.data.model.Match
@@ -18,7 +19,12 @@ enum class LeagueFilter(val label: String) {
 
 sealed class MatchListUiState {
     object Loading : MatchListUiState()
-    data class Success(val matches: List<Match>) : MatchListUiState()
+    data class Success(
+        val matches: List<Match>,
+        val updatedAtMillis: Long,
+        val refreshing: Boolean = false,
+        val refreshError: String? = null
+    ) : MatchListUiState()
     data class Error(
         val message: String,
         val currentDomain: String,
@@ -41,29 +47,64 @@ class MatchListViewModel(
 
     // 缓存全部比赛，切换 tab 时不重新请求
     private var allMatches: List<Match> = emptyList()
+    private var lastRefreshElapsedMillis = 0L
+    private var lastSuccessDomain: String? = null
+    private var loadGeneration = 0
+    private var loadingDomain: String? = null
 
     init {
         loadMatches()
     }
 
     fun loadMatches() {
-        _uiState.value = MatchListUiState.Loading
+        val domain = _currentDomain.value
+        if (loadingDomain == domain) return
+        val generation = ++loadGeneration
+        loadingDomain = domain
+        _uiState.value = when (val current = _uiState.value) {
+            is MatchListUiState.Success -> if (lastSuccessDomain == domain) {
+                current.copy(refreshing = true, refreshError = null)
+            } else MatchListUiState.Loading
+            else -> MatchListUiState.Loading
+        }
         viewModelScope.launch {
-            repository.fetchAllMatches(_currentDomain.value)
+            repository.fetchAllMatches(domain)
                 .onSuccess { matches ->
+                    if (generation != loadGeneration) return@onSuccess
                     allMatches = matches.filter { MatchParser.isBasketball(it.league) }
+                    lastRefreshElapsedMillis = SystemClock.elapsedRealtime()
+                    lastSuccessDomain = domain
+                    _uiState.value = MatchListUiState.Success(
+                        matches = emptyList(),
+                        updatedAtMillis = System.currentTimeMillis()
+                    )
                     applyFilter()
                 }
                 .onFailure {
-                    _uiState.value = MatchListUiState.Error(
-                        message = it.message ?: "未知错误",
-                        currentDomain = _currentDomain.value,
-                        backupDomains = MatchRepository.BACKUP_DOMAINS.filterNot { domain ->
-                            domain.equals(_currentDomain.value, ignoreCase = true)
-                        }
-                    )
+                    if (generation != loadGeneration) return@onFailure
+                    _uiState.value = when (val current = _uiState.value) {
+                        is MatchListUiState.Success -> current.copy(
+                            refreshing = false,
+                            refreshError = it.message ?: "更新失败"
+                        )
+                        else -> MatchListUiState.Error(
+                            message = it.message ?: "未知错误",
+                            currentDomain = domain,
+                            backupDomains = MatchRepository.BACKUP_DOMAINS.filterNot { backup ->
+                                backup.equals(domain, ignoreCase = true)
+                            }
+                        )
+                    }
                 }
+            if (generation == loadGeneration) loadingDomain = null
         }
+    }
+
+    fun refreshIfStale() {
+        if (loadingDomain != null) return
+        if (lastRefreshElapsedMillis == 0L ||
+            SystemClock.elapsedRealtime() - lastRefreshElapsedMillis >= REFRESH_INTERVAL_MILLIS
+        ) loadMatches()
     }
 
     fun switchDomain(domain: String) {
@@ -74,7 +115,7 @@ class MatchListViewModel(
 
     fun setFilter(f: LeagueFilter) {
         _filter.value = f
-        applyFilter()
+        if (_uiState.value is MatchListUiState.Success) applyFilter()
     }
 
     private fun applyFilter() {
@@ -83,6 +124,13 @@ class MatchListViewModel(
             LeagueFilter.CBA -> allMatches.filter { MatchParser.isCba(it.league) }
             LeagueFilter.ALL -> allMatches
         }
-        _uiState.value = MatchListUiState.Success(filtered)
+        _uiState.value = when (val current = _uiState.value) {
+            is MatchListUiState.Success -> current.copy(matches = filtered)
+            else -> MatchListUiState.Success(filtered, updatedAtMillis = System.currentTimeMillis())
+        }
+    }
+
+    private companion object {
+        const val REFRESH_INTERVAL_MILLIS = 60_000L
     }
 }

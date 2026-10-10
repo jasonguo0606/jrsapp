@@ -3,6 +3,7 @@ package com.jrsapp.data.parser
 import android.util.Log
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.model.StreamLink
+import com.jrsapp.util.redactedUrl
 import org.jsoup.Jsoup
 import java.net.URI
 
@@ -36,13 +37,13 @@ object MatchParser {
 
     private fun parseItem(el: org.jsoup.nodes.Element, index: Int, baseUrl: String): Match? {
         return try {
-            Log.d(TAG, "parseItem[$index] data-lid=${el.attr("data-lid")} html=${el.outerHtml().take(500)}")
+            Log.d(TAG, "parseItem[$index] data-lid=${el.attr("data-lid")}")
             val streamLinks = el.select(".lab_channel a")
                 .mapIndexed { i, a ->
                     val playUrl = normalizeUrl(a.attr("data-play"), baseUrl)
                     val normalized = playUrl.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
                         ?: normalizeUrl(a.attr("href"), baseUrl)
-                    Log.d(TAG, "parseItem[$index] line${i + 1} href=${a.attr("href")} data-play=${a.attr("data-play")} normalized=$normalized")
+                    Log.d(TAG, "parseItem[$index] line${i + 1} url=${redactedUrl(normalized)}")
                     normalized.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
                         ?.let { StreamLink(label = "线路${i + 1}", url = it) }
                 }
@@ -83,7 +84,8 @@ object MatchParser {
         }
     }
 
-    fun isNba(league: String) = league.contains("NBA", ignoreCase = true)
+    fun isNba(league: String) =
+        league.contains("NBA", ignoreCase = true) || league.contains("夏季联赛", ignoreCase = true)
     fun isCba(league: String) = league.contains("CBA", ignoreCase = true)
     fun isBasketball(league: String) =
         isNba(league) || isCba(league) || league.contains("篮球", ignoreCase = true)

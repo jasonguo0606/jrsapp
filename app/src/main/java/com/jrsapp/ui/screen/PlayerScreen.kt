@@ -118,6 +118,8 @@ fun PlayerScreen(
         factory = PlayerViewModelFactory(match, dlnaRepository)
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val player = rememberNativePlayer(uiState.currentSource, viewModel::onPlaybackError)
+    var userPaused by remember(player) { mutableStateOf(false) }
     val isFullscreenState = rememberSaveable { mutableStateOf(false) }
     val isFullscreen = isFullscreenState.value
     val activity = context.findActivity()
@@ -170,10 +172,12 @@ fun PlayerScreen(
     if (isFullscreen) {
         FullscreenPlayerLayout(
             source = uiState.currentSource,
+            player = player,
+            userPaused = userPaused,
+            onUserPauseChange = { userPaused = it },
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
-            onPlaybackError = viewModel::onPlaybackError,
             onExitFullscreen = { isFullscreenState.value = false },
             isCasting = uiState.selectedDlnaDevice != null
         )
@@ -241,10 +245,12 @@ fun PlayerScreen(
 
         NativePlayerSection(
             source = uiState.currentSource,
+            player = player,
+            userPaused = userPaused,
+            onUserPauseChange = { userPaused = it },
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
             errorMessage = uiState.errorMessage,
             onRetry = viewModel::retry,
-            onPlaybackError = viewModel::onPlaybackError,
             fullscreen = false,
             onToggleFullscreen = { isFullscreenState.value = true },
             isCasting = uiState.selectedDlnaDevice != null
@@ -341,10 +347,12 @@ fun PlayerScreen(
 @Composable
 private fun NativePlayerSection(
     source: VideoSource?,
+    player: ExoPlayer?,
+    userPaused: Boolean,
+    onUserPauseChange: (Boolean) -> Unit,
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
-    onPlaybackError: (VideoSource) -> Unit,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     isCasting: Boolean
@@ -372,9 +380,10 @@ private fun NativePlayerSection(
             }
         ) {
             when {
-                source != null -> NativePlayer(
-                    source = source,
-                    onPlaybackError = onPlaybackError,
+                source != null && player != null -> NativePlayer(
+                    exoPlayer = player,
+                    userPaused = userPaused,
+                    onUserPauseChange = onUserPauseChange,
                     fullscreen = fullscreen,
                     onToggleFullscreen = onToggleFullscreen,
                     isCasting = isCasting,
@@ -401,9 +410,44 @@ private fun NativePlayerSection(
 }
 
 @Composable
+private fun rememberNativePlayer(
+    source: VideoSource?,
+    onPlaybackError: (VideoSource) -> Unit
+): ExoPlayer? {
+    val context = LocalContext.current
+    val onPlaybackErrorState = rememberUpdatedState(onPlaybackError)
+    val player = remember(source?.url, source?.referer) {
+        source?.let { videoSource ->
+            val dataSourceFactory = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36")
+                .setDefaultRequestProperties(buildPlayerRequestHeaders(videoSource))
+
+            ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                .build()
+                .apply {
+                    Log.d(PLAYER_TAG, "prepare source type=${videoSource.type}")
+                    val mediaItemBuilder = MediaItem.Builder().setUri(videoSource.url)
+                    mediaMimeType(videoSource)?.let(mediaItemBuilder::setMimeType)
+                    setMediaItem(mediaItemBuilder.build())
+                    addListener(buildPlayerLogger(this) { onPlaybackErrorState.value(videoSource) })
+                    playWhenReady = true
+                    prepare()
+                }
+        }
+    }
+    DisposableEffect(player) {
+        onDispose { player?.release() }
+    }
+    return player
+}
+
+@Composable
 private fun NativePlayer(
-    source: VideoSource,
-    onPlaybackError: (VideoSource) -> Unit,
+    exoPlayer: ExoPlayer,
+    userPaused: Boolean,
+    onUserPauseChange: (Boolean) -> Unit,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     isCasting: Boolean,
@@ -411,32 +455,7 @@ private fun NativePlayer(
 ) {
     val context = LocalContext.current
     val activity = context.findActivity()
-    val onPlaybackErrorState = rememberUpdatedState(onPlaybackError)
-    val exoPlayer = remember(source.url, source.referer) {
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0.0.0 Mobile Safari/537.36")
-            .setDefaultRequestProperties(buildPlayerRequestHeaders(source))
-
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build()
-            .apply {
-                Log.d(
-                    PLAYER_TAG,
-                    "prepare source url=${source.url} referer=${source.referer} origin=${extractOrigin(source.referer)} type=${source.type}"
-                )
-                val mimeType = mediaMimeType(source)
-                val mediaItemBuilder = MediaItem.Builder().setUri(source.url)
-                mimeType?.let(mediaItemBuilder::setMimeType)
-                setMediaItem(mediaItemBuilder.build())
-                addListener(buildPlayerLogger(this) { onPlaybackErrorState.value(source) })
-                playWhenReady = true
-                prepare()
-            }
-    }
     var keepScreenOn by remember(exoPlayer) { mutableStateOf(exoPlayer.shouldKeepScreenOnForPlayback()) }
-    var userPaused by remember(exoPlayer) { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     val userPausedState = rememberUpdatedState(userPaused)
@@ -456,17 +475,11 @@ private fun NativePlayer(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(isCasting, exoPlayer) {
+    LaunchedEffect(isCasting, userPaused, exoPlayer) {
         if (isCasting) {
             exoPlayer.pause()
-        } else if (exoPlayer.playbackState != Player.STATE_ENDED) {
+        } else if (!userPaused && exoPlayer.playbackState != Player.STATE_ENDED) {
             exoPlayer.play()
-        }
-    }
-
-    DisposableEffect(exoPlayer) {
-        onDispose {
-            exoPlayer.release()
         }
     }
 
@@ -517,7 +530,7 @@ private fun NativePlayer(
             fullscreen = fullscreen,
             onToggleFullscreen = onToggleFullscreen,
             isCasting = isCasting,
-            onUserPlayPauseToggle = { userPaused = exoPlayer.isPlaying },
+            onUserPlayPauseToggle = { onUserPauseChange(exoPlayer.isPlaying) },
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -637,10 +650,12 @@ private fun BottomControlBar(
 @Composable
 private fun FullscreenPlayerLayout(
     source: VideoSource?,
+    player: ExoPlayer?,
+    userPaused: Boolean,
+    onUserPauseChange: (Boolean) -> Unit,
     resolving: Boolean,
     errorMessage: String?,
     onRetry: () -> Unit,
-    onPlaybackError: (VideoSource) -> Unit,
     onExitFullscreen: () -> Unit,
     isCasting: Boolean
 ) {
@@ -652,10 +667,12 @@ private fun FullscreenPlayerLayout(
     ) {
         NativePlayerSection(
             source = source,
+            player = player,
+            userPaused = userPaused,
+            onUserPauseChange = onUserPauseChange,
             resolving = resolving,
             errorMessage = errorMessage,
             onRetry = onRetry,
-            onPlaybackError = onPlaybackError,
             fullscreen = true,
             onToggleFullscreen = onExitFullscreen,
             isCasting = isCasting
@@ -903,11 +920,7 @@ private fun buildPlayerLogger(player: ExoPlayer, onError: () -> Unit): Player.Li
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            Log.e(
-                PLAYER_TAG,
-                "playerError code=${error.errorCodeName} message=${error.message}",
-                error
-            )
+            Log.e(PLAYER_TAG, "playerError code=${error.errorCodeName}")
             onError()
         }
 

@@ -1,5 +1,6 @@
 package com.jrsapp.ui.screen
 
+import android.text.format.DateFormat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +22,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.jrsapp.data.model.Match
@@ -49,6 +53,16 @@ fun MatchListScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val filter  by viewModel.filter.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                viewModel.refreshIfStale()
+                delay(60_000)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -101,16 +115,33 @@ fun MatchListScreen(
                     )
 
                     is MatchListUiState.Success -> {
-                        if (state.matches.isEmpty()) {
+                        Column {
                             Text(
-                                text = "暂无 ${filter.label} 比赛",
-                                color = TextLeague,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 13.sp,
-                                modifier = Modifier.align(Alignment.Center)
+                                text = if (state.refreshing) "正在更新比赛…" else
+                                    "更新于 ${DateFormat.format("HH:mm", state.updatedAtMillis)}",
+                                color = TextTime,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                             )
-                        } else {
-                            MatchList(matches = state.matches, onMatchClick = onMatchClick)
+                            if (state.refreshError != null) {
+                                Text(
+                                    text = "更新失败，仍显示上次比赛列表",
+                                    color = Amber,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                )
+                            }
+                            if (state.matches.isEmpty()) {
+                                Text(
+                                    text = "暂无 ${filter.label} 比赛",
+                                    color = TextLeague,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                                )
+                            } else {
+                                MatchList(matches = state.matches, onMatchClick = onMatchClick)
+                            }
                         }
                     }
                 }

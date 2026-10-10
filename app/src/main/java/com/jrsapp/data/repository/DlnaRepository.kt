@@ -76,7 +76,7 @@ class DlnaRepository(
             )
             Unit
         }.onFailure {
-            Log.e(TAG, "startCasting failure device=${device.friendlyName} source=${source.url}", it)
+            Log.e(TAG, "startCasting failure device=${device.friendlyName} (${it.javaClass.simpleName})")
         }
     }
 

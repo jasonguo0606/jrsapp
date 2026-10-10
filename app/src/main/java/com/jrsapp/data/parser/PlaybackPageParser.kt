@@ -8,6 +8,7 @@ import com.jrsapp.data.model.PlaybackPage
 import com.jrsapp.data.model.StreamLink
 import com.jrsapp.data.model.VideoSource
 import com.jrsapp.data.model.VideoSourceType
+import com.jrsapp.util.redactedUrl
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -41,7 +42,7 @@ object PlaybackPageParser {
         val subLines = mutableListOf<StreamLink>()
         var hasFilteredCommentary = false
 
-        Log.d(TAG, "extractPlaybackPage pageUrl=$pageUrl htmlLen=${html.length}")
+        Log.d(TAG, "extractPlaybackPage pageUrl=${redactedUrl(pageUrl)} htmlLen=${html.length}")
 
         doc.select("a[href], a[data-play], a[data-src], a[data-url], iframe[src], frame[src]")
             .forEach { element ->
@@ -59,17 +60,17 @@ object PlaybackPageParser {
                             val label = element.text().trim()
                                 .ifBlank { if (element.tagName() == "iframe") "默认入口" else "子线路${subLines.size + 1}" }
                             if (element.tagName() == "iframe" && label == "默认入口") {
-                                Log.d(TAG, "skip iframe fallback entry candidate=$candidate")
+                                Log.d(TAG, "skip iframe fallback entry candidate=${redactedUrl(candidate)}")
                                 return@forEach
                             }
                             if (!shouldKeepSubLineLabel(label)) {
                                 hasFilteredCommentary = true
-                                Log.d(TAG, "skip filtered subLine label=$label candidate=$candidate")
+                                Log.d(TAG, "skip filtered subLine label=$label candidate=${redactedUrl(candidate)}")
                                 return@forEach
                             }
                             Log.d(
                                 TAG,
-                                "subLine pageUrl=$pageUrl candidate=$candidate tag=${element.tagName()} text=${element.text().take(50)}"
+                                "subLine pageUrl=${redactedUrl(pageUrl)} candidate=${redactedUrl(candidate)} tag=${element.tagName()} text=${element.text().take(50)}"
                             )
                             addSubLine(
                                 subLines = subLines,
@@ -97,7 +98,7 @@ object PlaybackPageParser {
             subLines = subLines.toList(),
             hasFilteredCommentary = hasFilteredCommentary
         )
-        Log.d(TAG, "extractPlaybackPage subLines=${result.subLines}")
+        Log.d(TAG, "extractPlaybackPage subLines=${result.subLines.map { it.label }}")
         return result
     }
 
@@ -122,7 +123,7 @@ object PlaybackPageParser {
         val doc = Jsoup.parse(normalizedHtml, pageUrl)
         val directUrls = linkedSetOf<String>()
 
-        Log.d(TAG, "extractVideoSources pageUrl=$pageUrl htmlLen=${html.length}")
+        Log.d(TAG, "extractVideoSources pageUrl=${redactedUrl(pageUrl)} htmlLen=${html.length}")
 
         val pagePath = Uri.parse(pageUrl).path.orEmpty()
         if (pagePath.startsWith("/play/pao/", ignoreCase = true) ||
@@ -135,19 +136,19 @@ object PlaybackPageParser {
         }
 
         extractDirectMediaUrl(pageUrl, pageUrl)?.let { resolved ->
-            Log.d(TAG, "pageUrl resolved directly pageUrl=$pageUrl resolved=$resolved")
+            Log.d(TAG, "pageUrl resolved directly pageUrl=${redactedUrl(pageUrl)} resolved=${redactedUrl(resolved)}")
             directUrls.add(resolved)
         }
 
         extractPlayUrlFromResponse(normalizedHtml, pageUrl)?.let { playUrl ->
             extractDirectMediaUrl(playUrl, pageUrl)?.let { resolved ->
-                Log.d(TAG, "response playUrl resolved pageUrl=$pageUrl playUrl=$playUrl resolved=$resolved")
+                Log.d(TAG, "response playUrl resolved pageUrl=${redactedUrl(pageUrl)} resolved=${redactedUrl(resolved)}")
                 directUrls.add(resolved)
             }
         }
 
         if (isQqApiRequest(pageUrl) && directUrls.isEmpty()) {
-            Log.d(TAG, "skip qq page dom scan without playUrl pageUrl=$pageUrl")
+            Log.d(TAG, "skip qq page dom scan without playUrl pageUrl=${redactedUrl(pageUrl)}")
             return emptyList()
         }
 
@@ -163,7 +164,7 @@ object PlaybackPageParser {
                     .filter { it.isNotBlank() }
                     .mapNotNull { normalizeUrl(it, pageUrl) }
                     .forEach { candidate ->
-                        Log.d(TAG, "candidate pageUrl=$pageUrl candidate=$candidate tag=${element.tagName()} text=${element.text().take(50)}")
+                        Log.d(TAG, "candidate pageUrl=${redactedUrl(pageUrl)} candidate=${redactedUrl(candidate)} tag=${element.tagName()}")
                         extractDirectMediaUrl(candidate, pageUrl)?.let(directUrls::add)
                     }
             }
@@ -179,11 +180,11 @@ object PlaybackPageParser {
 
         videoUrlRegex.findAll(normalizedHtml).forEach { match ->
             val normalized = normalizeUrl(match.value, pageUrl)
-            Log.d(TAG, "regex media match=${match.value} normalized=$normalized")
+            Log.d(TAG, "regex media match=${redactedUrl(normalized)}")
             normalized?.let(directUrls::add)
         }
 
-        Log.d(TAG, "extractVideoSources directUrls=${directUrls.toList()}")
+        Log.d(TAG, "extractVideoSources directUrls=${directUrls.map(::redactedUrl)}")
         return directUrls.mapIndexed { index, url -> buildVideoSource(url = url, index = index, referer = pageUrl) }
     }
 
@@ -193,13 +194,13 @@ object PlaybackPageParser {
             val syntheticOnly = extractSyntheticPlayerUrls(normalizedHtml, pageUrl)
                 .filter { it != pageUrl }
                 .distinct()
-            Log.d(TAG, "extractNestedPageUrls qq syntheticOnly pageUrl=$pageUrl nestedUrls=$syntheticOnly")
+            Log.d(TAG, "extractNestedPageUrls qq syntheticOnly pageUrl=${redactedUrl(pageUrl)} count=${syntheticOnly.size}")
             return syntheticOnly
         }
         val doc = Jsoup.parse(normalizedHtml, pageUrl)
         val nestedUrls = linkedSetOf<String>()
 
-        Log.d(TAG, "extractNestedPageUrls pageUrl=$pageUrl htmlLen=${html.length}")
+        Log.d(TAG, "extractNestedPageUrls pageUrl=${redactedUrl(pageUrl)} htmlLen=${html.length}")
 
         doc.select("iframe[src], frame[src], embed[src], a[href], a[data-play], a[data-src], a[data-url]")
             .forEach { element ->
@@ -216,7 +217,7 @@ object PlaybackPageParser {
                         if (isStaticResource(candidate)) return@forEach
                         if (isIncompletePlayerUrl(candidate)) return@forEach
                         if (isLikelyPlayerPage(candidate) && candidate != pageUrl) {
-                            Log.d(TAG, "nested candidate=$candidate tag=${element.tagName()} text=${element.text().take(50)}")
+                            Log.d(TAG, "nested candidate=${redactedUrl(candidate)} tag=${element.tagName()}")
                             nestedUrls.add(candidate)
                         }
                     }
@@ -229,19 +230,19 @@ object PlaybackPageParser {
                 if (isStaticResource(candidate)) return@forEach
                 if (isIncompletePlayerUrl(candidate)) return@forEach
                 if (isLikelyPlayerPage(candidate) && candidate != pageUrl) {
-                    Log.d(TAG, "nested regex candidate=$candidate")
+                    Log.d(TAG, "nested regex candidate=${redactedUrl(candidate)}")
                     nestedUrls.add(candidate)
                 }
             }
 
         extractSyntheticPlayerUrls(normalizedHtml, pageUrl).forEach { syntheticUrl ->
             if (syntheticUrl != pageUrl) {
-                Log.d(TAG, "synthetic nested pageUrl=$pageUrl candidate=$syntheticUrl")
+                Log.d(TAG, "synthetic nested pageUrl=${redactedUrl(pageUrl)} candidate=${redactedUrl(syntheticUrl)}")
                 nestedUrls.add(syntheticUrl)
             }
         }
 
-        Log.d(TAG, "extractNestedPageUrls nestedUrls=${nestedUrls.toList()}")
+        Log.d(TAG, "extractNestedPageUrls nestedUrls=${nestedUrls.map(::redactedUrl)}")
         return nestedUrls.toList()
     }
 
@@ -279,12 +280,12 @@ object PlaybackPageParser {
             isMsssPlayerPage(candidateUrl) -> resolveMsssMediaUrl(candidateUrl, pageUrl)
             is538PlayerPage(candidateUrl) -> resolve538MediaUrl(candidateUrl)
             isMediaUrl(candidateUrl) -> {
-                Log.d(TAG, "direct media candidate=$candidateUrl")
+                Log.d(TAG, "direct media candidate=${redactedUrl(candidateUrl)}")
                 candidateUrl
             }
             else -> {
                 val path = runCatching { Uri.parse(candidateUrl).path }.getOrNull()
-                Log.d(TAG, "skip non-player candidate=$candidateUrl path=$path")
+                Log.d(TAG, "skip non-player candidate=${redactedUrl(candidateUrl)} path=$path")
                 null
             }
         }
@@ -292,7 +293,7 @@ object PlaybackPageParser {
     private fun resolvePapsMediaUrl(candidateUrl: String): String? {
         val encrypted = extractRawQueryValue(candidateUrl, "id")?.takeIf { it.isNotBlank() } ?: return null
         val decrypted = decryptPapsUrl(encrypted)
-        Log.d(TAG, "paps candidate=$candidateUrl decrypted=$decrypted")
+        Log.d(TAG, "paps candidate=${redactedUrl(candidateUrl)} decrypted=${redactedUrl(decrypted)}")
         return decrypted?.takeIf(::isMediaUrl)
     }
 
@@ -300,27 +301,27 @@ object PlaybackPageParser {
         val uri = runCatching { Uri.parse(candidateUrl) }.getOrNull() ?: return null
         val idValue = uri.getQueryParameter("id")?.takeIf { it.isNotBlank() } ?: return null
         val decodedId = decodeQueryValue(idValue)
-        Log.d(TAG, "playerPage candidate=$candidateUrl id=$idValue decoded=$decodedId")
+        Log.d(TAG, "playerPage candidate=${redactedUrl(candidateUrl)}")
 
         return when {
             decodedId.startsWith("/live/", ignoreCase = true) -> {
                 val resolved = "https://hdl6.szsummer.cn$decodedId"
-                Log.d(TAG, "decoded live path resolved=$resolved")
+                Log.d(TAG, "decoded live path resolved=${redactedUrl(resolved)}")
                 resolved
             }
             decodedId.startsWith("http://", ignoreCase = true) || decodedId.startsWith("https://", ignoreCase = true) -> {
-                Log.d(TAG, "decoded absolute url=$decodedId")
+                Log.d(TAG, "decoded absolute url=${redactedUrl(decodedId)}")
                 decodedId
             }
             isMediaUrl(decodedId) -> {
                 val resolved = resolveRelativeUrl(decodedId, candidateUrl)
-                Log.d(TAG, "decoded media url resolved=$resolved")
+                Log.d(TAG, "decoded media url resolved=${redactedUrl(resolved)}")
                 resolved
             }
             else -> {
                 val host = extractMediaBaseHost(candidateUrl, pageUrl)
                 val resolved = host?.let { "https://$it$decodedId" }
-                Log.d(TAG, "decoded fallback host=$host resolved=$resolved")
+                Log.d(TAG, "decoded fallback host=$host resolved=${redactedUrl(resolved)}")
                 resolved
             }
         }
@@ -333,7 +334,7 @@ object PlaybackPageParser {
             ?: uri.getQueryParameter("id2")?.takeIf { it.isNotBlank() }
             ?: return null
         val decoded = decodeQueryValue(playUrl)
-        Log.d(TAG, "538 player candidate=$candidateUrl decoded=$decoded")
+        Log.d(TAG, "538 player candidate=${redactedUrl(candidateUrl)} decoded=${redactedUrl(decoded)}")
         return decoded.takeIf(::isMediaUrl)
     }
 
@@ -468,7 +469,7 @@ object PlaybackPageParser {
             val encoded = encodedStrRegex.find(html)?.groupValues?.getOrNull(1)
             if (!encoded.isNullOrBlank()) {
                 val next = "https://cloud.yumixiu768.com/player/paps.html?id=$encoded"
-                Log.d(TAG, "synthesized encoded paps url=$next from pageUrl=$pageUrl")
+                Log.d(TAG, "synthesized encoded paps url=${redactedUrl(next)} from pageUrl=${redactedUrl(pageUrl)}")
                 return listOf(next)
             }
         }
@@ -483,7 +484,7 @@ object PlaybackPageParser {
                     ?.let { normalizeUrl(it, pageUrl) }
             }
             if (!iframeSrc.isNullOrBlank() && !isStaticResource(iframeSrc)) {
-                Log.d(TAG, "synthesized i11 iframe url=$iframeSrc from pageUrl=$pageUrl")
+                Log.d(TAG, "synthesized i11 iframe url=${redactedUrl(iframeSrc)} from pageUrl=${redactedUrl(pageUrl)}")
                 return listOf(iframeSrc)
             }
         }
@@ -491,7 +492,7 @@ object PlaybackPageParser {
         if (uri.path?.endsWith("/play/p/zhj_j.php", ignoreCase = true) == true) {
             val qqUrl = decryptZhjQqUrl(html, pageUrl)
             if (!qqUrl.isNullOrBlank()) {
-                Log.d(TAG, "synthesized zhj qq url=$qqUrl from pageUrl=$pageUrl")
+                Log.d(TAG, "synthesized zhj qq url=${redactedUrl(qqUrl)} from pageUrl=${redactedUrl(pageUrl)}")
                 return listOf(qqUrl)
             }
         }
@@ -500,7 +501,7 @@ object PlaybackPageParser {
             val playUrl = extractPlayUrlFromResponse(html, pageUrl)
             val next = playUrl?.let(::build538PlayerUrl)
             if (!next.isNullOrBlank()) {
-                Log.d(TAG, "synthesized qq 538 url=$next from pageUrl=$pageUrl playUrl=$playUrl")
+                Log.d(TAG, "synthesized qq 538 url=${redactedUrl(next)} from pageUrl=${redactedUrl(pageUrl)}")
                 return listOf(next)
             }
         }
@@ -523,7 +524,7 @@ object PlaybackPageParser {
             else ->
                 "$scheme://$host/play/$id.html"
         }
-        Log.d(TAG, "synthesized next player url=$next from pageUrl=$pageUrl")
+        Log.d(TAG, "synthesized next player url=${redactedUrl(next)} from pageUrl=${redactedUrl(pageUrl)}")
         return listOf(next)
     }
 
@@ -535,14 +536,10 @@ object PlaybackPageParser {
             val callbackName = extractQqCallbackName(html)
             val qqUrl = extractQqApiUrl(decrypted)
                 ?.let { sanitizeQqApiUrl(it, callbackName) }
-            val qqUrlTail = qqUrl?.takeLast(180).orEmpty()
-            Log.d(
-                TAG,
-                "decryptZhjQqUrl pageUrl=$pageUrl callbackName=$callbackName decryptedPrefix=${decrypted.take(200)} decryptedSuffix=${decrypted.takeLast(200)} qqUrlTail=$qqUrlTail"
-            )
+            Log.d(TAG, "decryptZhjQqUrl pageUrl=${redactedUrl(pageUrl)} callbackName=$callbackName")
             qqUrl?.let { normalizeUrl(it, pageUrl) }
         }.onFailure {
-            Log.e(TAG, "decryptZhjQqUrl failed pageUrl=$pageUrl", it)
+            Log.e(TAG, "decryptZhjQqUrl failed pageUrl=${redactedUrl(pageUrl)} (${it.javaClass.simpleName})")
         }.getOrNull()
     }
 
@@ -590,7 +587,7 @@ object PlaybackPageParser {
     private fun extractPlayUrlFromResponse(html: String, pageUrl: String): String? {
         val rawPlayUrl = playUrlRegex.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return null
         val normalized = normalizeUrl(rawPlayUrl, pageUrl)?.replace("\\u0026", "&") ?: return null
-        Log.d(TAG, "extractPlayUrlFromResponse pageUrl=$pageUrl playUrl=$normalized")
+        Log.d(TAG, "extractPlayUrlFromResponse pageUrl=${redactedUrl(pageUrl)} playUrl=${redactedUrl(normalized)}")
         return normalized
     }
 
@@ -673,10 +670,10 @@ object PlaybackPageParser {
             val decoded = Base64.getDecoder().decode(encrypted)
             val decrypted = xxteaDecrypt(decoded, PAPS_KEY.toByteArray(Charsets.UTF_8)) ?: return null
             val json = decrypted.toString(Charsets.UTF_8)
-            Log.d(TAG, "decryptPapsUrl payload=$json")
+            Log.d(TAG, "decryptPapsUrl completed")
             JSONObject(json).optString("url").takeIf { it.isNotBlank() }
         }.onFailure {
-            Log.e(TAG, "decryptPapsUrl failed", it)
+            Log.e(TAG, "decryptPapsUrl failed (${it.javaClass.simpleName})")
         }.getOrNull()
     }
 

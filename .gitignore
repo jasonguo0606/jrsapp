@@ -11,6 +11,8 @@ captures/
 *.apk
 *.aab
 *.ap_
+*.jks
+app/release/
 
 # Kotlin
 *.class
