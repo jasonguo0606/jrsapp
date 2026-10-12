@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,13 +54,13 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -103,15 +104,14 @@ import kotlinx.coroutines.delay
 
 private const val PLAYER_TAG = "NativePlayer"
 
-// ── Scoreboard palette (mirrors MatchListScreen) ─────────────────────────────
 private val PBgBase    = Color(0xFF030303)
 private val PBgCard    = Color(0xFF0C0C0C)
-private val PBdrCard   = Color(0xFF1A1A1A)
+private val PBdrCard   = Color(0xFF242424)
 private val PBdrLive   = Color(0xFF2A1A00)
-private val PDivider   = Color(0xFF111111)
+private val PDivider   = Color(0xFF242424)
 private val PAmber     = Color(0xFFF5A623)
-private val PTextTeam  = Color(0xFFAAAAAA)
-private val PTextSub   = Color(0xFF666666)
+private val PTextTeam  = Color(0xFFF2F2F2)
+private val PTextSub   = Color(0xFF929292)
 private val PTextStream = Color(0xFF4FC3F7)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -253,28 +253,26 @@ fun PlayerScreen(
             .verticalScroll(rememberScrollState())
     ) {
         Column {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = {
-                    Column {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = "${match.homeTeam} vs ${match.awayTeam}",
-                            fontSize = 14.sp,
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp,
-                            color = Color.White
+                            color = PTextTeam
                         )
                         Text(
                             text = match.league,
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = PTextSub,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 2.sp
+                            letterSpacing = 1.sp
                         )
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = PTextSub)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = PTextTeam)
                     }
                 },
                 actions = {
@@ -287,13 +285,13 @@ fun PlayerScreen(
                         Icon(
                             Icons.Default.Cast,
                             contentDescription = "投屏",
-                            tint = if (uiState.selectedDlnaDevice != null) PTextStream else PTextSub
+                            tint = if (uiState.selectedDlnaDevice != null) PTextStream else PTextTeam
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = PBgBase)
             )
-            HorizontalDivider(thickness = 2.dp, color = PDivider)
+            HorizontalDivider(thickness = 1.dp, color = PDivider)
         }
 
         if (uiState.selectedDlnaDevice != null || uiState.castMessage != null) {
@@ -320,16 +318,9 @@ fun PlayerScreen(
             isCasting = uiState.selectedDlnaDevice != null
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "── 切换线路",
-            color = PTextSub,
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 2.sp,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(28.dp))
+        PlayerSectionTitle("切换线路")
+        Spacer(modifier = Modifier.height(14.dp))
         FlowRow(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -339,17 +330,18 @@ fun PlayerScreen(
                 val isSelected = index == uiState.selectedLineIndex
                 Box(
                     modifier = Modifier
+                        .heightIn(min = 46.dp)
                         .border(1.dp, if (isSelected) PAmber else PBdrCard)
-                        .background(if (isSelected) Color(0xFF1C1000) else PBgCard)
+                        .background(if (isSelected) Color(0xFF241808) else PBgCard)
                         .clickable { viewModel.selectLine(index) }
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = link.label,
                         color = if (isSelected) PAmber else PTextSub,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        fontSize = 14.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
@@ -357,28 +349,19 @@ fun PlayerScreen(
 
         when {
             uiState.loadingPlaybackPage -> {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "正在加载...",
+                    text = "正在加载直播线路…",
                     color = PTextSub,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.sp,
+                    fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
             uiState.subLines.isNotEmpty() -> {
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "── 选择直播线路",
-                    color = PTextSub,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 2.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(28.dp))
+                PlayerSectionTitle("选择直播线路")
+                Spacer(modifier = Modifier.height(14.dp))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -388,17 +371,18 @@ fun PlayerScreen(
                         val isSelected = index == uiState.selectedSubLineIndex
                         Box(
                             modifier = Modifier
+                                .heightIn(min = 46.dp)
                                 .border(1.dp, if (isSelected) PTextStream else PBdrCard)
-                                .background(if (isSelected) Color(0xFF071520) else PBgCard)
+                                .background(if (isSelected) Color(0xFF081923) else PBgCard)
                                 .clickable { viewModel.selectSubLine(index) }
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = link.label,
                                 color = if (isSelected) PTextStream else PTextSub,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }
@@ -406,7 +390,19 @@ fun PlayerScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun PlayerSectionTitle(title: String) {
+    Row(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(modifier = Modifier.size(width = 18.dp, height = 2.dp).background(PAmber))
+        Text(title, color = PTextTeam, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -429,9 +425,9 @@ private fun NativePlayerSection(
             .fillMaxWidth()
             .padding(horizontal = if (fullscreen) 0.dp else 16.dp),
         shape = RoundedCornerShape(0.dp),
-        color = Color(0xFF070B14),
+        color = Color.Black,
         tonalElevation = 0.dp,
-        shadowElevation = if (fullscreen) 0.dp else 10.dp,
+        shadowElevation = 0.dp,
         border = if (fullscreen) null else BorderStroke(1.dp, PBdrCard)
     ) {
         Box(
@@ -457,10 +453,14 @@ private fun NativePlayerSection(
                     modifier = Modifier.fillMaxSize()
                 )
                 webView != null -> WebSourceResolverView(webView)
-                resolving -> CircularProgressIndicator(
+                resolving -> Column(
                     modifier = Modifier.align(Alignment.Center),
-                    color = PAmber
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(color = PAmber, modifier = Modifier.size(30.dp))
+                    Text("正在接入直播…", color = PTextSub, fontSize = 13.sp)
+                }
                 errorMessage != null -> PlayerErrorView(
                     message = errorMessage,
                     onRetry = onRetry,
@@ -469,7 +469,7 @@ private fun NativePlayerSection(
                 else -> Text(
                     text = "暂无可播放视频源",
                     color = PTextSub,
-                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
@@ -1068,20 +1068,26 @@ private fun PlayerErrorView(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "ERROR: $message",
+            text = "当前线路播放失败",
+            color = PTextTeam,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = message,
             color = PTextSub,
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace
+            fontSize = 12.sp
         )
         Button(
             onClick = onRetry,
+            modifier = Modifier.heightIn(min = 44.dp),
             colors = ButtonDefaults.buttonColors(containerColor = PAmber)
         ) {
             Text(
-                text = "RETRY",
+                text = "重试",
                 color = Color.Black,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 2.sp
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }

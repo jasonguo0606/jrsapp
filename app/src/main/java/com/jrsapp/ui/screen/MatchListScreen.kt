@@ -3,19 +3,21 @@ package com.jrsapp.ui.screen
 import android.text.format.DateFormat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,20 +32,16 @@ import coil.compose.AsyncImage
 import com.jrsapp.data.model.Match
 import kotlinx.coroutines.delay
 
-// ── Scoreboard palette ──────────────────────────────────────────────────────
 private val BgBase      = Color(0xFF030303)
-private val BgCard      = Color(0xFF0C0C0C)
-private val BgCardLive  = Color(0xFF0E0C08)
-private val BdrCard     = Color(0xFF1A1A1A)
-private val BdrLive     = Color(0xFF2A1A00)
-private val Divider1    = Color(0xFF111111)
+private val Divider1    = Color(0xFF242424)
 private val Amber       = Color(0xFFF5A623)
 private val LiveGreen   = Color(0xFF39FF14)
-private val TextTeam    = Color(0xFFAAAAAA)
-private val TextLeague  = Color(0xFF666666)
-private val TextTime    = Color(0xFF5A5A5A)
+private val TextTeam    = Color(0xFFF2F2F2)
+private val TextLeague  = Color(0xFF969696)
+private val TextTime    = Color(0xFF929292)
 private val TextStream  = Color(0xFF4FC3F7)
-private val TabOff      = Color(0xFF666666)
+private val TabOff      = Color(0xFF999999)
+private val MatchDatePattern = Regex("""\d{1,2}-\d{1,2}""")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,8 +69,9 @@ fun MatchListScreen(
                     title = {
                         Text(
                             text = "JRS 篮球直播",
+                            fontSize = 23.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 3.sp,
+                            letterSpacing = 1.sp,
                             color = Amber
                         )
                     },
@@ -82,11 +81,11 @@ fun MatchListScreen(
                     ),
                     actions = {
                         IconButton(onClick = { viewModel.loadMatches() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = TabOff)
+                            Icon(Icons.Default.Refresh, contentDescription = "刷新", tint = TextLeague)
                         }
                     }
                 )
-                HorizontalDivider(thickness = 2.dp, color = Divider1)
+                HorizontalDivider(thickness = 1.dp, color = Divider1)
             }
         },
         containerColor = BgBase
@@ -115,30 +114,26 @@ fun MatchListScreen(
                     )
 
                     is MatchListUiState.Success -> {
-                        Column {
+                        Column(modifier = Modifier.fillMaxSize()) {
                             Text(
                                 text = if (state.refreshing) "正在更新比赛…" else
                                     "更新于 ${DateFormat.format("HH:mm", state.updatedAtMillis)}",
                                 color = TextTime,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                             )
                             if (state.refreshError != null) {
                                 Text(
                                     text = "更新失败，仍显示上次比赛列表",
                                     color = Amber,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                                 )
                             }
                             if (state.matches.isEmpty()) {
-                                Text(
-                                    text = "暂无 ${filter.label} 比赛",
-                                    color = TextLeague,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
-                                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                                )
+                                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Text("暂无 ${filter.label} 比赛", color = TextLeague, fontSize = 14.sp)
+                                }
                             } else {
                                 MatchList(matches = state.matches, onMatchClick = onMatchClick)
                             }
@@ -168,11 +163,10 @@ private fun ScoreboardTabs(selected: LeagueFilter, onSelect: (LeagueFilter) -> U
                 ) {
                     Text(
                         text = f.label,
-                        modifier = Modifier.padding(vertical = 10.dp),
+                        modifier = Modifier.padding(vertical = 14.dp),
                         color = if (isSelected) Amber else TabOff,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 2.sp
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
                     )
                     Box(
                         modifier = Modifier
@@ -190,127 +184,98 @@ private fun ScoreboardTabs(selected: LeagueFilter, onSelect: (LeagueFilter) -> U
 @Composable
 private fun MatchList(matches: List<Match>, onMatchClick: (Match) -> Unit) {
     LazyColumn(
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp)
+        contentPadding = PaddingValues(bottom = 24.dp)
     ) {
-        items(matches, key = { it.id }) { match ->
-            ScoreboardCard(match = match, onClick = { onMatchClick(match) })
+        var start = 0
+        while (start < matches.size) {
+            val date = matchDateKey(matches[start].time)
+            var end = start + 1
+            while (end < matches.size && matchDateKey(matches[end].time) == date) end++
+            if (date != null) {
+                val count = end - start
+                item(key = "date-$start") { MatchDateHeader(date, count) }
+            }
+            items(matches.subList(start, end), key = { it.id }) { match ->
+                ScoreboardCard(match = match, onClick = { onMatchClick(match) })
+            }
+            start = end
         }
     }
+}
+
+@Composable
+private fun MatchDateHeader(date: String, count: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(date.replace("-", "月") + "日", color = TextTeam, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Text("共 $count 场比赛", color = TextTime, fontSize = 12.sp)
+    }
+    HorizontalDivider(thickness = 1.dp, color = Divider1)
 }
 
 @Composable
 private fun ScoreboardCard(match: Match, onClick: () -> Unit) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .border(1.dp, if (match.isLive) BdrLive else BdrCard)
-            .background(if (match.isLive) BgCardLive else BgCard)
+            .clickable(onClickLabel = "查看 ${match.homeTeam} 对 ${match.awayTeam} 的播放线路", onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 18.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = match.league,
-                    color = TextLeague,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 3.sp
-                )
-                if (match.isLive) LiveIndicator()
-                else Text(
-                    text = match.time,
-                    color = TextTime,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
-                )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Text(match.league, color = TextLeague, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = match.time.substringAfter(' ', match.time),
+                color = TextTeam,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center)
+            )
+            if (match.isLive) LiveIndicator(modifier = Modifier.align(Alignment.CenterEnd))
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                ScoreboardLogo(url = match.homeLogoUrl)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(match.homeTeam, color = TextTeam, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ScoreboardLogo(url = match.homeLogoUrl)
-                    Spacer(modifier = Modifier.width(7.dp))
-                    Text(
-                        text = match.homeTeam,
-                        color = TextTeam,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Box(
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (match.isLive && match.score.isNotBlank()) {
-                        Text(
-                            text = match.score,
-                            color = Amber,
-                            fontSize = 17.sp,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 2.sp
-                        )
-                    } else {
-                        Text(
-                            text = "VS",
-                            color = TextTime,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 1.sp
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = match.awayTeam,
-                        color = TextTeam,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.width(7.dp))
-                    ScoreboardLogo(url = match.awayLogoUrl)
-                }
+            Text(
+                text = match.score.takeIf { match.isLive && it.isNotBlank() } ?: "VS",
+                color = if (match.isLive && match.score.isNotBlank()) Amber else TextTime,
+                fontSize = if (match.isLive && match.score.isNotBlank()) 17.sp else 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End) {
+                Text(match.awayTeam, color = TextTeam, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(modifier = Modifier.width(8.dp))
+                ScoreboardLogo(url = match.awayLogoUrl)
             }
+        }
 
-            if (match.streamUrls.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider(thickness = 1.dp, color = Divider1)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "[ ${match.streamUrls.size} 条播放线路 ] ›",
-                    color = TextStream,
-                    fontSize = 9.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.sp
-                )
+        if (match.streamUrls.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = TextStream, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(5.dp))
+                Text("${match.streamUrls.size} 条播放线路", color = TextStream, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextStream, modifier = Modifier.size(18.dp))
             }
         }
     }
+    HorizontalDivider(thickness = 1.dp, color = Divider1, modifier = Modifier.padding(horizontal = 16.dp))
 }
 
 @Composable
-private fun LiveIndicator() {
+private fun LiveIndicator(modifier: Modifier = Modifier) {
     var dotVisible by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -319,6 +284,7 @@ private fun LiveIndicator() {
         }
     }
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -333,7 +299,7 @@ private fun LiveIndicator() {
         Text(
             text = "LIVE",
             color = LiveGreen,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontFamily = FontFamily.Monospace,
             letterSpacing = 1.sp
         )
@@ -345,12 +311,14 @@ private fun ScoreboardLogo(url: String) {
     AsyncImage(
         model = url,
         contentDescription = null,
+        contentScale = ContentScale.Fit,
         modifier = Modifier
-            .size(32.dp)
-            .border(1.dp, Color(0xFF1F1F1F))
-            .background(Color(0xFF111111))
+            .size(42.dp)
     )
 }
+
+private fun matchDateKey(time: String): String? =
+    time.substringBefore(' ').takeIf { MatchDatePattern.matches(it) }
 
 @Composable
 private fun ErrorView(
@@ -366,31 +334,30 @@ private fun ErrorView(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        Text("比赛列表加载失败", color = TextTeam, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Text(
-            text = "ERROR: $message",
+            text = message,
             color = TabOff,
-            fontSize = 12.sp,
-            fontFamily = FontFamily.Monospace
+            fontSize = 13.sp
         )
         Text(
-            text = "HOST: $currentDomain",
+            text = "当前节点：$currentDomain",
             color = TextStream,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             fontFamily = FontFamily.Monospace
         )
         Button(
             onClick = onRetry,
+            modifier = Modifier.heightIn(min = 44.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Amber)
         ) {
-            Text("RETRY", fontFamily = FontFamily.Monospace, color = Color.Black, letterSpacing = 2.sp)
+            Text("重试", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         if (backupDomains.isNotEmpty()) {
             Text(
-                text = "── 备用节点 ──",
+                text = "备用节点",
                 color = TabOff,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 2.sp
+                fontSize = 13.sp
             )
             backupDomains.forEach { domain ->
                 OutlinedButton(
@@ -398,7 +365,7 @@ private fun ErrorView(
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
                     border = BorderStroke(1.dp, Divider1)
                 ) {
-                    Text(domain, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = TextStream)
+                    Text(domain, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = TextStream)
                 }
             }
         }
