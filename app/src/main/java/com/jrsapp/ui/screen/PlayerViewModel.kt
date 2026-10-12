@@ -8,6 +8,7 @@ import com.jrsapp.data.model.DlnaDevice
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.model.StreamLink
 import com.jrsapp.data.model.VideoSource
+import com.jrsapp.data.parser.PlaybackPageParser
 import com.jrsapp.data.repository.DlnaRepository
 import com.jrsapp.data.repository.PlaybackRepository
 import com.jrsapp.util.redactedUrl
@@ -23,6 +24,7 @@ data class PlayerUiState(
     val resolvingSource: Boolean = false,
     val subLines: List<StreamLink> = emptyList(),
     val currentSource: VideoSource? = null,
+    val webPageUrl: String? = null,
     val resolvedSources: List<VideoSource> = emptyList(),
     val errorMessage: String? = null,
     val dlnaDevices: List<DlnaDevice> = emptyList(),
@@ -144,7 +146,7 @@ class PlayerViewModel(
 
     fun selectSubLine(index: Int) {
         val state = _uiState.value
-        if (index == state.selectedSubLineIndex && (state.resolvingSource || state.currentSource != null)) return
+        if (index == state.selectedSubLineIndex && (state.resolvingSource || state.currentSource != null || state.webPageUrl != null)) return
         resolveSubLine(index, allowFallback = false)
     }
 
@@ -155,6 +157,31 @@ class PlayerViewModel(
         } else {
             loadLinePage(_uiState.value.selectedLineIndex)
         }
+    }
+
+    fun onWebPlayerSource(pageUrl: String, encryptedUrl: String) {
+        if (_uiState.value.webPageUrl != pageUrl) return
+        val source = PlaybackPageParser.extractVideoSources("", encryptedUrl)
+            .firstOrNull()
+            ?.copy(referer = null)
+        if (source == null) {
+            _uiState.value = _uiState.value.copy(webPageUrl = null)
+            tryNextSubLine("当前线路未解析到可播放视频源")
+            return
+        }
+        Log.d(TAG, "web player resolved host=${runCatching { java.net.URI(source.url).host }.getOrNull()}")
+        _uiState.value = _uiState.value.copy(
+            resolvingSource = false,
+            webPageUrl = null,
+            currentSource = source,
+            resolvedSources = listOf(source)
+        )
+    }
+
+    fun onWebPlayerTimeout(pageUrl: String) {
+        if (_uiState.value.webPageUrl != pageUrl) return
+        _uiState.value = _uiState.value.copy(webPageUrl = null)
+        tryNextSubLine("当前线路获取播放地址超时")
     }
 
     fun onPlaybackError(source: VideoSource) {
@@ -218,6 +245,7 @@ class PlayerViewModel(
             _uiState.value = state.copy(
                 resolvingSource = false,
                 currentSource = null,
+                webPageUrl = null,
                 errorMessage = message
             )
         }
@@ -235,6 +263,7 @@ class PlayerViewModel(
             resolvingSource = false,
             subLines = emptyList(),
             currentSource = null,
+            webPageUrl = null,
             resolvedSources = emptyList(),
             errorMessage = null
         )
@@ -290,6 +319,7 @@ class PlayerViewModel(
         _uiState.value = _uiState.value.copy(
             resolvingSource = true,
             currentSource = null,
+            webPageUrl = null,
             resolvedSources = emptyList(),
             errorMessage = null
         )
@@ -321,6 +351,7 @@ class PlayerViewModel(
             selectedSubLineIndex = index,
             resolvingSource = true,
             currentSource = null,
+            webPageUrl = null,
             resolvedSources = emptyList(),
             errorMessage = null
         )
@@ -329,6 +360,13 @@ class PlayerViewModel(
             _uiState.value = _uiState.value.copy(
                 resolvingSource = false,
                 errorMessage = "未找到对应直播线路"
+            )
+            return
+        }
+
+        if (isWebPlayerPage(subLine.url)) {
+            _uiState.value = _uiState.value.copy(
+                webPageUrl = subLine.url
             )
             return
         }
@@ -365,11 +403,17 @@ class PlayerViewModel(
             _uiState.value.copy(
                 resolvingSource = false,
                 currentSource = sources.first(),
+                webPageUrl = null,
                 resolvedSources = sources
             ).also { state ->
                 recastIfNeeded(state.selectedDlnaDevice, sources.first())
             }
         }
+    }
+
+    private fun isWebPlayerPage(url: String): Boolean {
+        val path = runCatching { java.net.URI(url).path.orEmpty().lowercase() }.getOrDefault("")
+        return path.startsWith("/play/vxt/") || path.startsWith("/play/txf/")
     }
 
     private fun recastIfNeeded(device: DlnaDevice?, source: VideoSource) {

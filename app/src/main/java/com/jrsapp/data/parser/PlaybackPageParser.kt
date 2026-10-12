@@ -125,15 +125,10 @@ object PlaybackPageParser {
 
         Log.d(TAG, "extractVideoSources pageUrl=${redactedUrl(pageUrl)} htmlLen=${html.length}")
 
-        val pagePath = Uri.parse(pageUrl).path.orEmpty()
-        if (pagePath.startsWith("/play/pao/", ignoreCase = true) ||
-            pagePath.startsWith("/play/wen/", ignoreCase = true)
-        ) {
-            encodedStrRegex.find(normalizedHtml)?.groupValues?.getOrNull(1)
-                ?.let(::decryptPapsUrl)
-                ?.takeIf(::isMediaUrl)
-                ?.let(directUrls::add)
-        }
+        encodedStrRegex.find(normalizedHtml)?.groupValues?.getOrNull(1)
+            ?.let(::decryptPapsUrl)
+            ?.takeIf(::isMediaUrl)
+            ?.let(directUrls::add)
 
         extractDirectMediaUrl(pageUrl, pageUrl)?.let { resolved ->
             Log.d(TAG, "pageUrl resolved directly pageUrl=${redactedUrl(pageUrl)} resolved=${redactedUrl(resolved)}")
@@ -291,7 +286,10 @@ object PlaybackPageParser {
         }
 
     private fun resolvePapsMediaUrl(candidateUrl: String): String? {
-        val encrypted = extractRawQueryValue(candidateUrl, "id")?.takeIf { it.isNotBlank() } ?: return null
+        val encrypted = extractRawQueryValue(candidateUrl, "id")
+            ?.let(Uri::decode)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
         val decrypted = decryptPapsUrl(encrypted)
         Log.d(TAG, "paps candidate=${redactedUrl(candidateUrl)} decrypted=${redactedUrl(decrypted)}")
         return decrypted?.takeIf(::isMediaUrl)
@@ -391,7 +389,7 @@ object PlaybackPageParser {
     }
 
     private fun isPapsPage(url: String): Boolean =
-        runCatching { Uri.parse(url).path }.getOrNull()?.contains("/player/paps.html", ignoreCase = true) == true
+        runCatching { Uri.parse(url).path }.getOrNull()?.endsWith("/paps.html", ignoreCase = true) == true
 
     private fun isMsssPlayerPage(url: String): Boolean =
         runCatching { Uri.parse(url).path }.getOrNull()?.contains("msss.html", ignoreCase = true) == true
@@ -427,6 +425,7 @@ object PlaybackPageParser {
     private fun isSubLinePage(candidateUrl: String, currentPageUrl: String): Boolean {
         if (candidateUrl == currentPageUrl) return false
         if (!isLikelyPlayerPage(candidateUrl)) return false
+        if (isMediaUrl(candidateUrl)) return false
 
         val currentUri = runCatching { Uri.parse(currentPageUrl) }.getOrNull()
         val candidateUri = runCatching { Uri.parse(candidateUrl) }.getOrNull() ?: return false
@@ -441,16 +440,7 @@ object PlaybackPageParser {
             return false
         }
 
-        return path.contains("/play/sm.html") ||
-            path.contains("/play/kbs.html") ||
-            path.contains("/play/i11.html") ||
-            path.contains("/play/y.php") ||
-            path.contains("/play/j.php") ||
-            path.contains("/play/mgxl.php") ||
-            path.startsWith("/play/wen/") ||
-            path.startsWith("/play/pao/") ||
-            path.contains("/play/p/zhj_j.php") ||
-            path.contains("/play/a") ||
+        return path.startsWith("/play/") ||
             path.contains("/player/pap.html") ||
             path.contains("/player/paps.html")
     }

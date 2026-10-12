@@ -9,6 +9,12 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -90,6 +96,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import com.jrsapp.data.model.Match
 import com.jrsapp.data.model.VideoSource
 import com.jrsapp.data.repository.DlnaRepository
+import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
 
 private const val PLAYER_TAG = "NativePlayer"
@@ -119,6 +126,58 @@ fun PlayerScreen(
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val player = rememberNativePlayer(uiState.currentSource, viewModel::onPlaybackError)
+    val webView = remember(context, uiState.webPageUrl) {
+        uiState.webPageUrl?.let { url ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?
+                    ): WebResourceResponse? {
+                        val uri = request?.url ?: return null
+                        if (uri.path?.endsWith("/paps.html", ignoreCase = true) != true ||
+                            uri.getQueryParameter("id").isNullOrBlank()
+                        ) return null
+                        Log.d(PLAYER_TAG, "web player handoff host=${uri.host}")
+                        view?.post { viewModel.onWebPlayerSource(url, uri.toString()) }
+                        return WebResourceResponse("text/html", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                    }
+                }
+                webChromeClient = WebChromeClient()
+                setBackgroundColor(android.graphics.Color.BLACK)
+                loadUrl(url)
+            }
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(uiState.webPageUrl) {
+        uiState.webPageUrl?.let { pageUrl ->
+            delay(15000)
+            viewModel.onWebPlayerTimeout(pageUrl)
+        }
+    }
+    DisposableEffect(webView, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> webView?.onPause()
+                Lifecycle.Event.ON_RESUME -> webView?.onResume()
+                else -> Unit
+            }
+        }
+        if (webView != null) lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            webView?.let {
+                (it.parent as? ViewGroup)?.removeView(it)
+                it.stopLoading()
+                it.destroy()
+            }
+        }
+    }
     var userPaused by remember(player) { mutableStateOf(false) }
     val isFullscreenState = rememberSaveable { mutableStateOf(false) }
     val isFullscreen = isFullscreenState.value
@@ -173,6 +232,7 @@ fun PlayerScreen(
         FullscreenPlayerLayout(
             source = uiState.currentSource,
             player = player,
+            webView = webView,
             userPaused = userPaused,
             onUserPauseChange = { userPaused = it },
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
@@ -246,6 +306,7 @@ fun PlayerScreen(
         NativePlayerSection(
             source = uiState.currentSource,
             player = player,
+            webView = webView,
             userPaused = userPaused,
             onUserPauseChange = { userPaused = it },
             resolving = uiState.loadingPlaybackPage || uiState.resolvingSource,
@@ -348,6 +409,7 @@ fun PlayerScreen(
 private fun NativePlayerSection(
     source: VideoSource?,
     player: ExoPlayer?,
+    webView: WebView?,
     userPaused: Boolean,
     onUserPauseChange: (Boolean) -> Unit,
     resolving: Boolean,
@@ -389,6 +451,7 @@ private fun NativePlayerSection(
                     isCasting = isCasting,
                     modifier = Modifier.fillMaxSize()
                 )
+                webView != null -> WebSourceResolverView(webView)
                 resolving -> CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center),
                     color = PAmber
@@ -406,6 +469,23 @@ private fun NativePlayerSection(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun WebSourceResolverView(webView: WebView) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = {
+                (webView.parent as? ViewGroup)?.removeView(webView)
+                webView
+            },
+            modifier = Modifier.size(1.dp)
+        )
+        CircularProgressIndicator(
+            modifier = Modifier.align(Alignment.Center),
+            color = PAmber
+        )
     }
 }
 
@@ -651,6 +731,7 @@ private fun BottomControlBar(
 private fun FullscreenPlayerLayout(
     source: VideoSource?,
     player: ExoPlayer?,
+    webView: WebView?,
     userPaused: Boolean,
     onUserPauseChange: (Boolean) -> Unit,
     resolving: Boolean,
@@ -668,6 +749,7 @@ private fun FullscreenPlayerLayout(
         NativePlayerSection(
             source = source,
             player = player,
+            webView = webView,
             userPaused = userPaused,
             onUserPauseChange = onUserPauseChange,
             resolving = resolving,
